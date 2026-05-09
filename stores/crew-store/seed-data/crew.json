@@ -1,0 +1,185 @@
+{
+  "crew": [
+    {
+      "id": "wiseman-r",
+      "name": "Reid Wiseman",
+      "role": "Commander",
+      "mission": "artemis-ii",
+      "specialty": "Systems & Flight Operations",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "glover-v",
+      "name": "Victor Glover",
+      "role": "Pilot",
+      "mission": "artemis-ii",
+      "specialty": "Spacecraft Piloting & Navigation",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "koch-c",
+      "name": "Christina Koch",
+      "role": "Mission Specialist",
+      "mission": "artemis-ii",
+      "specialty": "EVA & Electrical Systems",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "hansen-j",
+      "name": "Jeremy Hansen",
+      "role": "Mission Specialist",
+      "mission": "artemis-ii",
+      "specialty": "Robotics & Life Support",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "patel-a",
+      "name": "Ananya Patel",
+      "role": "Commander",
+      "mission": "artemis-iii",
+      "specialty": "Geology & Surface Operations",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "okafor-e",
+      "name": "Emeka Okafor",
+      "role": "Pilot",
+      "mission": "artemis-iii",
+      "specialty": "Lunar Descent & Ascent",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "chen-l",
+      "name": "Li Chen",
+      "role": "Mission Specialist",
+      "mission": "artemis-iii",
+      "specialty": "Lunar Surface EVA & Sample Collection",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "bergstrom-k",
+      "name": "Karin Bergström",
+      "role": "Mission Specialist",
+      "mission": "artemis-iii",
+      "specialty": "Habitat Systems & ISRU",
+      "status": "active",
+      "persona": "astronaut"
+    },
+    {
+      "id": "tanaka-h",
+      "name": "Hiroshi Tanaka",
+      "role": "Commander",
+      "mission": "artemis-iv",
+      "specialty": "Station Assembly & Docking",
+      "status": "standby",
+      "persona": "astronaut"
+    },
+    {
+      "id": "morales-s",
+      "name": "Sofia Morales",
+      "role": "Pilot",
+      "mission": "artemis-iv",
+      "specialty": "Rendezvous & Proximity Operations",
+      "status": "standby",
+      "persona": "astronaut"
+    },
+    {
+      "id": "adeyemi-o",
+      "name": "Oluwaseun Adeyemi",
+      "role": "Mission Specialist",
+      "mission": "artemis-iv",
+      "specialty": "Gateway Module Integration",
+      "status": "standby",
+      "persona": "astronaut"
+    },
+    {
+      "id": "kovacs-m",
+      "name": "Márton Kovács",
+      "role": "Mission Specialist",
+      "mission": "artemis-iv",
+      "specialty": "Robotics & External Maintenance",
+      "status": "standby",
+      "persona": "astronaut"
+    },
+    {
+      "id": "gc-flight",
+      "name": "Rachel Torres",
+      "role": "Flight Director",
+      "mission": "all",
+      "specialty": "Mission Management",
+      "status": "active",
+      "persona": "ground-control"
+    },
+    {
+      "id": "gc-capcom",
+      "name": "James McKinnon",
+      "role": "CAPCOM",
+      "mission": "all",
+      "specialty": "Crew Communications",
+      "status": "active",
+      "persona": "ground-control"
+    },
+    {
+      "id": "gc-eclss",
+      "name": "Diana Vasquez",
+      "role": "ECLSS Officer",
+      "mission": "all",
+      "specialty": "Environmental Control & Life Support",
+      "status": "active",
+      "persona": "ground-control"
+    },
+    {
+      "id": "gc-gnc",
+      "name": "Pavel Ivanov",
+      "role": "GNC Officer",
+      "mission": "all",
+      "specialty": "Guidance, Navigation & Control",
+      "status": "active",
+      "persona": "ground-control"
+    },
+    {
+      "id": "gc-systems",
+      "name": "Marcus Webb",
+      "role": "Systems Engineer",
+      "mission": "all",
+      "specialty": "Spacecraft Systems Integration",
+      "status": "active",
+      "persona": "ground-control"
+    },
+    {
+      "id": "gc-surgeon",
+      "name": "Dr. Priya Nair",
+      "role": "Flight Surgeon",
+      "mission": "all",
+      "specialty": "Crew Health & Medical",
+      "status": "active",
+      "persona": "ground-control"
+    },
+    {
+      "id": "gc-comm",
+      "name": "Tyler Osei",
+      "role": "COMM Officer",
+      "mission": "all",
+      "specialty": "Communications Systems",
+      "status": "active",
+      "persona": "ground-control"
+    },
+    {
+      "id": "gc-eva",
+      "name": "Natasha Volkov",
+      "role": "EVA Officer",
+      "mission": "all",
+      "specialty": "Extravehicular Activity Planning",
+      "status": "active",
+      "persona": "ground-control"
+    }
+  ],
+  "conversations": []
+}
