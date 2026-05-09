@@ -90,31 +90,37 @@ The generator reads `scenarios.json` and fires them on a loop against the BFF AP
 
 ### Agents
 
-Solo Enterprise for kagent CRDs in k8s. Agents are `Agent` custom resources with `type: Declarative`, system prompts, and tool references to MCP servers. For local dev (docker-compose), agents run as plain Go HTTP servers that accept requests and call MCP tools. kagent supports Go ADK natively, so no Python dependency. Two agents:
+Agents are **not Go services** — they are kagent `Agent` CRDs with `type: Declarative`. The kagent controller and Python ADK runtime handle LLM calls, tool orchestration, memory, and context compaction. We define agents as YAML manifests with system prompts and tool references to our MCP servers.
+
+Two agents:
 - **Mission Support Agent** — answers crew questions, searches KB, creates tickets
 - **KB Curator Agent** — de-duplicates articles, auto-tags, scores usefulness
 
+For local dev (docker-compose, no k8s), the BFF provides a stub mode that returns keyword-matched responses without requiring kagent or an LLM. Set `STUB_MODE=true` (default when agents are unreachable).
+
+Agent deployment requires Phase 3 (kagent Enterprise on k8s).
+
 ### MCP Servers
 
-Go, using the official SDK (`github.com/modelcontextprotocol/go-sdk/mcp`). Wrap the store REST APIs as MCP tools. Two servers:
-- **KB MCP** — search, read, create, update KB articles
-- **Ticket MCP** — search, read, create, update tickets, add comments
+Scaffolded with `kmcp init go --no-git`. Uses the official Go MCP SDK (`github.com/modelcontextprotocol/go-sdk/mcp`). Each follows the kmcp project structure: `cmd/server/main.go` entrypoint, `internal/tools/` for tool definitions, `internal/client/` for store HTTP clients. Supports stdio and streamable HTTP transports.
+
+Two servers:
+- **KB MCP** — search, read, create, update KB articles, list categories
+- **Ticket MCP** — search, read, create, update tickets, add comments, get summary
 
 ### Containers and Deployment
 
-Each service has a Dockerfile with multi-stage build (build stage + scratch/distroless runtime). Each service README documents:
+Each Go service has a Dockerfile with multi-stage build (build stage + scratch/distroless runtime). Each service README documents:
 - How to build: `go build -o <name> .`
 - How to test: `go test ./... -v`
 - How to run locally: `go run . [env vars]`
-- How to run as container: `docker build` and `docker run` with env vars
-- How to deploy to k8s: pointer to helm values or raw manifest
-- Local k8s: OrbStack (preferred) or kind
+- How to build container: `docker build -t amss/<name>:latest .`
+- How to deploy to k8s: raw manifests or helm chart
 
-`docker-compose.yml` at the root runs the full stack locally (no Solo products required).
+**k8s is the default deployment target.** OrbStack (preferred) or kind provide a local cluster. The workflow is: build → test → containerize → deploy to k8s. No docker-compose layer.
 
-### k8s Deployment (Solo Enterprise Products)
+### Solo Enterprise Products (on the same k8s cluster)
 
-For k8s deployment with the full Solo stack:
 - **Solo Enterprise for kagent**: Install via Helm per [quickstart](https://docs.solo.io/kagent-enterprise/docs/latest/quickstart/). Includes ambient mesh, agentgateway as waypoint, management UI, OTel, ClickHouse.
 - **Solo Enterprise for agentgateway**: Install via Helm per [install guide](https://docs.solo.io/agentgateway/2.3.x/install/helm). Provides LLM gateway with guardrails, failover, content routing.
 - License keys: `SOLO_ISTIO_LICENSE_KEY`, `GLOO_GATEWAY_LICENSE_KEY`, `AGENTGATEWAY_LICENSE_KEY`
@@ -172,7 +178,6 @@ All east-west traffic (agents ↔ MCP servers ↔ stores) runs on the Solo distr
 amss/
 ├── CLAUDE.md                        # This document
 ├── SPEC.md                          # Data schemas, API contract, seed data spec
-├── docker-compose.yml               # Full local stack
 │
 ├── stores/
 │   ├── kb-store/
@@ -212,42 +217,42 @@ amss/
 │       └── README.md
 │
 ├── mcp-servers/
-│   ├── kb-mcp/
+│   ├── kb-mcp/                          # Scaffolded with kmcp
 │   │   ├── go.mod
-│   │   ├── main.go
-│   │   ├── tools.go                 # MCP tool definitions
-│   │   ├── tools_test.go
+│   │   ├── cmd/server/main.go           # Entrypoint (stdio + HTTP transport)
+│   │   ├── internal/client/client.go    # KB store HTTP client
+│   │   ├── internal/client/client_test.go
+│   │   ├── internal/tools/              # One file per MCP tool
+│   │   │   ├── all_tools.go             # Tool registry
+│   │   │   ├── search_kb.go
+│   │   │   ├── read_kb_article.go
+│   │   │   ├── create_kb_article.go
+│   │   │   ├── update_kb_article.go
+│   │   │   ├── list_kb_categories.go
+│   │   │   └── tools_test.go
+│   │   ├── kmcp.yaml                    # kmcp deployment config
 │   │   ├── Dockerfile
 │   │   └── README.md
 │   │
-│   └── ticket-mcp/                  # Same shape
+│   └── ticket-mcp/                      # Same kmcp structure
 │       ├── go.mod
-│       ├── main.go
-│       ├── tools.go
-│       ├── tools_test.go
+│       ├── cmd/server/main.go
+│       ├── internal/client/
+│       ├── internal/tools/
+│       ├── kmcp.yaml
 │       ├── Dockerfile
 │       └── README.md
 │
 ├── agents/
 │   ├── mission-support-agent/
-│   │   ├── go.mod
-│   │   ├── main.go
-│   │   ├── agent.go                 # Chat handler, MCP client calls
-│   │   ├── agent_test.go
-│   │   ├── prompts/
-│   │   │   └── system.md
-│   │   ├── Dockerfile
-│   │   └── README.md
+│   │   ├── agent.yaml                   # kagent Agent CRD (Declarative)
+│   │   └── prompts/
+│   │       └── system.md                # System prompt (referenced in agent.yaml)
 │   │
-│   └── kb-curator-agent/            # Same shape
-│       ├── go.mod
-│       ├── main.go
-│       ├── agent.go
-│       ├── agent_test.go
-│       ├── prompts/
-│       │   └── system.md
-│       ├── Dockerfile
-│       └── README.md
+│   └── kb-curator-agent/
+│       ├── agent.yaml                   # kagent Agent CRD (Declarative)
+│       └── prompts/
+│           └── system.md
 │
 ├── bff/
 │   ├── go.mod
@@ -312,24 +317,25 @@ amss/
 
 ---
 
-## Build Order
+## Build Phases
 
-### v0.1.0-alpha1 — Foundation (stores)
-1. **Stores** (kb-store, ticket-store, crew-store) — no dependencies, test independently
+### Phase 1 — Data Stores ✅
+1. **Stores** (kb-store, ticket-store, crew-store) — in-memory JSON stores, full test coverage
 
-### v0.1.0-alpha2 — Application layer
-2. **MCP servers** (kb-mcp, ticket-mcp) — depend on stores at runtime
-3. **BFF** — depends on stores and agents at runtime
-4. **Agents** (mission-support, kb-curator) — depend on MCP servers at runtime
-5. **Frontend** — depends on BFF at runtime
-6. **Activity generator** — depends on BFF at runtime
-7. **docker-compose.yml** — full local stack, no Solo products required
+### Phase 2 — Application Layer
+2. **MCP servers** (kb-mcp, ticket-mcp) — scaffolded with `kmcp`, wrap store APIs as MCP tools ✅
+3. **BFF** — proxies stores, stubs agent responses when kagent unavailable ✅
+4. **Frontend** — React + Vite, user switcher, astronaut chat + ground control views
+5. **Activity generator** — placeholder scenarios (create/close ticket, create/archive KB)
+6. **k8s manifests** — deploy stores, MCP servers, BFF, frontend to OrbStack/kind (agents stubbed)
 
-### v0.1.0-alpha3 — Solo Enterprise integration
-8. **Helm charts** — k8s manifests, Solo Enterprise for kagent Agent CRDs, agentgateway config
-9. **Solo Enterprise for kagent** install + agent deployment
-10. **Solo Enterprise for agentgateway** install + LLM routing, guardrails, failover
-11. **Scripts** — setup, teardown, seed, demo
+### Phase 3 — Solo Enterprise Integration (k8s)
+7. **Solo Enterprise for kagent** — install on OrbStack, deploy Agent CRDs (declarative YAML)
+8. **Solo Enterprise for agentgateway** — LLM routing, guardrails, failover
+9. **MCP server deployment** — `kmcp deploy` to create `MCPServer` CRDs
+10. **Agent CRDs** — mission-support-agent and kb-curator-agent as `Agent` resources
+11. **Wire BFF** — connect to kagent agent endpoints instead of stubs
+12. **Scripts** — setup, teardown, seed, demo
 
 Each step must have passing tests before moving to the next.
 
@@ -356,12 +362,6 @@ Each step must have passing tests before moving to the next.
 | `KB_STORE_URL` | `http://kb-store:8081` | KB store base URL |
 | `TICKET_STORE_URL` | `http://ticket-store:8082` | Ticket store base URL |
 | `CREW_STORE_URL` | `http://crew-store:8083` | Crew store base URL |
-| `MISSION_SUPPORT_AGENT_URL` | `http://mission-support-agent:8090` | Agent URL |
-| `KB_CURATOR_AGENT_URL` | `http://kb-curator-agent:8091` | Agent URL |
-
-### Agents
-| Var | Default | Description |
-|---|---|---|
-| `PORT` | 8090/8091 | Listen port |
-| `KB_MCP_URL` | `http://kb-mcp:9001` | KB MCP server URL |
-| `TICKET_MCP_URL` | `http://ticket-mcp:9002` | Ticket MCP server URL |
+| `MISSION_SUPPORT_AGENT_URL` | `http://mission-support-agent:8090` | kagent agent endpoint (Phase 3) |
+| `KB_CURATOR_AGENT_URL` | `http://kb-curator-agent:8091` | kagent agent endpoint (Phase 3) |
+| `STUB_MODE` | `true` | When true (or agents unreachable), BFF returns keyword-matched stub responses |
