@@ -63,7 +63,7 @@ git checkout v0.1.0-alpha1  # or the target branch
 
 ## Phase 1 — Local Dev (No k8s, No Solo Products)
 
-Build and test all services individually, then run them together with docker-compose.
+Build and test all services individually.
 
 ### 1.1 Build and Test Stores
 
@@ -96,7 +96,14 @@ go vet ./...
 cd ../..
 ```
 
-Expected: All three stores pass with 200+ tests total, zero race conditions.
+Expected: all pass with no race conditions.
+
+| Service | Tests |
+|---|---|
+| kb-store | 47 |
+| ticket-store | 88 |
+| crew-store | 90 |
+| **Stores total** | **225** |
 
 ### 1.2 Run a Store Locally
 
@@ -152,6 +159,12 @@ go vet ./...
 cd ../..
 ```
 
+| Service | Tests |
+|---|---|
+| kb-mcp | 45 |
+| ticket-mcp | 61 |
+| **MCP total** | **106** |
+
 **Run locally (stdio mode for testing with MCP inspector):**
 
 ```bash
@@ -178,33 +191,58 @@ go vet ./...
 cd ..
 ```
 
-### 1.5 Build and Test Agents
+103 tests covering proxy routes (root-path and `/api/v1/` variants), stub chat and curator responses, CORS, reset, and agent fallback behavior.
 
-> **TODO**: Agents will be built as kagent `Agent` CRDs. Local dev stubs TBD.
+### 1.5 Agents
+
+Agents are kagent `Agent` CRDs — YAML manifests, not Go services. They live in `agents/` and have no local build step. They are applied to the cluster in Phase 3 once kagent is installed.
+
+```
+agents/
+├── mission-support-agent/
+│   ├── agent.yaml        # kagent Agent CRD
+│   └── prompts/system.md
+└── kb-curator-agent/
+    ├── agent.yaml
+    └── prompts/system.md
+```
 
 ### 1.6 Build Frontend
 
-> **TODO**: React + Vite frontend.
-
-### 1.7 Docker Compose — Full Local Stack
-
-> **TODO**: docker-compose.yml that runs all services together without Solo products.
-
 ```bash
-docker compose up --build
+cd frontend
+npm install
+npm run build   # produces dist/ — verified clean in CI
+cd ..
 ```
 
-Verify:
+In dev, `npm run dev` starts Vite at `http://localhost:5173`. All `/api/v1/*` requests are proxied to the BFF at `localhost:8080`.
+
+### 1.7 Build and Test Activity Generator
+
 ```bash
-# BFF health (should report status of all downstream services)
-curl http://localhost:8080/api/v1/health | jq .
+cd activity-generator
+go build ./...
+go test ./... -v -race
+go vet ./...
+cd ..
 ```
+
+17 tests covering scenario loading, template resolution, step execution, and multi-step chaining.
+
+Run against a live BFF:
+```bash
+cd activity-generator
+BFF_URL=http://localhost:30080 go run .
+```
+
+Runs 4 scenarios — creates a P3 ticket, creates and closes a P4 ticket, publishes a KB article, publishes and archives a superseded KB article — then exits.
 
 ---
 
 ## Phase 2 — Kubernetes (OrbStack, No Solo Products Yet)
 
-Deploy the AMSS application to a local k8s cluster before adding Solo Enterprise products.
+Deploy the full AMSS application to a local k8s cluster. Agents run in stub mode (keyword-matched responses, no LLM required).
 
 ### 2.1 Create Cluster
 
@@ -220,27 +258,136 @@ If using kind instead:
 ```bash
 kind create cluster --name amss
 kubectl config use-context kind-amss
+# Uncomment the kind load lines in k8s/deploy.sh before running
 ```
 
-### 2.2 Build and Load Images
+### 2.2 Deploy (One Command)
 
-> **TODO**: Build all container images and load them into the local cluster.
+Run from the **repo root**:
 
 ```bash
-# Example for one service:
-cd stores/kb-store
-docker build -t amss/kb-store:latest .
-# OrbStack sees local images automatically
-# For kind: kind load docker-image amss/kb-store:latest --name amss
+./k8s/deploy.sh
 ```
 
-### 2.3 Deploy Application
+The script:
+1. Builds 7 Docker images: `amss/kb-store`, `amss/ticket-store`, `amss/crew-store`, `amss/kb-mcp`, `amss/ticket-mcp`, `amss/bff`, `amss/frontend`
+2. The frontend image is built with `VITE_API_URL=http://localhost:30080` baked in (Vite embeds it at bundle time)
+3. Applies manifests in order: namespace → stores → MCP servers → BFF → frontend
+4. Waits for all 7 deployments to reach Ready
+5. Prints access URLs
 
-> **TODO**: Helm chart or raw manifests for the AMSS application.
+On success:
+```
+==> All deployments ready.
 
-### 2.4 Verify
+  Frontend:  http://localhost:30081
+  BFF API:   http://localhost:30080
+```
 
-> **TODO**: Port-forward and test endpoints.
+### 2.3 Verify
+
+**BFF health:**
+```bash
+curl -s http://localhost:30080/health
+# {"data":{"status":"ok","service":"bff"},"error":null}
+```
+
+**Crew store (20 members):**
+```bash
+curl -s http://localhost:30080/api/v1/crew | jq '.data.total'
+# 20
+```
+
+**KB store (30 articles):**
+```bash
+curl -s http://localhost:30080/api/v1/kb | jq '.data.total'
+# 30
+```
+
+**Ticket store (15 tickets):**
+```bash
+curl -s http://localhost:30080/api/v1/tickets | jq '.data.total'
+# 15
+```
+
+**Chat (stub mode — no agent required):**
+```bash
+curl -s -X POST http://localhost:30080/api/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"crew_id":"wiseman-r","session_id":"test-001","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
+  | jq '.data'
+```
+
+Expected response references KB-001 (the WCS toilet pressure fault article).
+
+**Frontend:**
+```bash
+open http://localhost:30081
+```
+
+Two views: Astronaut Chat (`/chat`) and Ground Control (`/ground-control`). Use the user switcher to change crew member identity.
+
+**KB curation (stub mode):**
+```bash
+curl -s -X POST http://localhost:30080/api/v1/curator \
+  -H 'Content-Type: application/json' \
+  -d '{}' \
+  | jq '.data.duplicates_flagged'
+```
+
+Returns 3 near-duplicate WCS articles flagged against KB-001.
+
+**Reset all stores to seed data:**
+```bash
+curl -s -X POST http://localhost:30080/api/v1/reset | jq '.data'
+```
+
+### 2.4 Run Activity Generator Against k8s
+
+```bash
+cd activity-generator
+BFF_URL=http://localhost:30080 go run .
+```
+
+Fires 4 scenarios against the live BFF. Verify tickets and articles were created:
+```bash
+curl -s http://localhost:30080/api/v1/tickets | jq '.data.total'
+# 17 (15 seed + 2 created)
+curl -s http://localhost:30080/api/v1/kb | jq '.data.total'
+# 32 (30 seed + 2 created; one immediately archived)
+```
+
+### 2.5 Test Summary (Phase 2 Complete)
+
+| Service | Tests |
+|---|---|
+| kb-store | 47 |
+| ticket-store | 88 |
+| crew-store | 90 |
+| kb-mcp | 45 |
+| ticket-mcp | 61 |
+| bff | 103 |
+| activity-generator | 17 |
+| **Total** | **451** |
+
+All pass with `-race` flag. Run the full suite from the repo root:
+```bash
+for svc in stores/kb-store stores/ticket-store stores/crew-store \
+           mcp-servers/kb-mcp mcp-servers/ticket-mcp \
+           bff activity-generator; do
+  echo "==> $svc"
+  (cd "$svc" && go test ./... -race)
+done
+```
+
+### 2.6 Clean Redeploy
+
+To wipe and redeploy from scratch:
+```bash
+./k8s/teardown.sh && ./k8s/deploy.sh
+```
+
+`teardown.sh` deletes the `amss` namespace (all resources). `deploy.sh` rebuilds images and redeploys.
 
 ---
 
@@ -290,6 +437,12 @@ spec:
 
 > **TODO**: Document Agent CRD creation.
 
+Apply the pre-authored Agent CRDs:
+```bash
+kubectl apply -f agents/mission-support-agent/agent.yaml -n amss
+kubectl apply -f agents/kb-curator-agent/agent.yaml -n amss
+```
+
 Agents reference MCP servers by name:
 
 ```yaml
@@ -327,7 +480,15 @@ spec:
 > - Ingress: external traffic → BFF
 > - Egress: agent → LLM providers (with guardrails, failover)
 
-### 3.6 Verify Full Stack
+### 3.6 Flip BFF Out of Stub Mode
+
+Once agents are deployed and reachable:
+```bash
+kubectl set env deployment/bff STUB_MODE=false -n amss
+kubectl rollout status deployment/bff -n amss
+```
+
+### 3.7 Verify Full Stack
 
 > **TODO**: End-to-end verification steps.
 
@@ -336,10 +497,11 @@ spec:
 kubectl port-forward service/kagent-enterprise-ui -n kagent 4000:80 &
 open http://localhost:4000
 
-# Test chat via BFF
-curl -X POST http://localhost:8080/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{"crew_id": "wiseman-r", "mission": "artemis-ii", "session_id": "demo-1", "message": "What is the WCS flush procedure?"}'
+# Test chat via BFF (now routed to live agent)
+curl -s -X POST http://localhost:30080/api/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"crew_id":"wiseman-r","session_id":"demo-1","mission":"artemis-ii","message":"What is the WCS flush procedure?"}' \
+  | jq '.data.response'
 ```
 
 ---
@@ -354,7 +516,11 @@ curl -X POST http://localhost:8080/api/v1/chat \
 
 ### Remove AMSS Application
 
-> **TODO**: Helm uninstall or kubectl delete commands.
+```bash
+./k8s/teardown.sh
+```
+
+This deletes the `amss` namespace and every resource inside it (deployments, services, pods, secrets).
 
 ### Remove Solo Enterprise Products
 
@@ -394,6 +560,22 @@ orb status
 orb restart k8s
 ```
 
+### BFF returns 404 for /api/v1/* routes
+
+The BFF handles both root-path routes (for local dev via Vite proxy) and `/api/v1/` routes (for k8s). The `/api/v1/kb` path is rewritten to `/articles` at the kb-store — confirm with:
+```bash
+curl -s http://localhost:30080/api/v1/kb/KB-001 | jq '.data.title'
+```
+
+### Frontend can't reach BFF in k8s
+
+`VITE_API_URL` is embedded at Docker build time. Rebuilding the frontend image after changing the URL requires a full redeploy:
+```bash
+./k8s/teardown.sh && ./k8s/deploy.sh
+```
+
+In dev, `VITE_API_URL` is unset and the Vite proxy handles `/api/v1/*` → `localhost:8080`.
+
 ### kmcp deploy fails
 
 Ensure the kmcp controller CRDs are installed:
@@ -409,4 +591,5 @@ kubectl get crd mcpservers.kagent.dev
 
 | Date | Phase | What Changed |
 |---|---|---|
-| 2026-05-09 | Phase 1 | Initial runbook. Three stores built and tested (225+ tests). |
+| 2026-05-09 | Phase 1 | Initial runbook. Three stores built and tested (225 tests). |
+| 2026-05-09 | Phase 2 | MCP servers (106 tests), BFF with stub mode (103 tests), React frontend, activity generator (17 tests). Full k8s deploy via `./k8s/deploy.sh`. 451 total tests. Frontend at localhost:30081, BFF at localhost:30080. |
