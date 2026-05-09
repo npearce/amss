@@ -2,7 +2,19 @@
 
 ## What This Is
 
-A demonstration application showcasing Solo.io's AI platform products (kagent, agentgateway, ambient mesh, agentregistry) through a fictional NASA Artemis mission support system. Astronauts and ground control use AI agents to query a knowledge base, manage support tickets, and get real-time help with spacecraft systems.
+A demonstration application showcasing Solo.io's commercial AI platform products through a fictional NASA Artemis mission support system. Astronauts and ground control use AI agents to query a knowledge base, manage support tickets, and get real-time help with spacecraft systems.
+
+### Solo.io Commercial Products Used
+
+This demo uses the **commercial/enterprise** editions, not the open source versions. License keys are required.
+
+| Commercial Product | What It Does | License Key Env Var | Docs |
+|---|---|---|---|
+| **Solo Enterprise for kagent** | Agent runtime, CRDs, management UI, observability, multi-framework support | (part of install) | [docs.solo.io/kagent-enterprise](https://docs.solo.io/kagent-enterprise/docs/latest/) |
+| **Solo Enterprise for agentgateway** | AI-native gateway for LLM traffic, MCP, guardrails, failover, observability | `AGENTGATEWAY_LICENSE_KEY` | [docs.solo.io/agentgateway](https://docs.solo.io/agentgateway/2.3.x/) |
+| **Solo distribution of Istio** (ambient mode) | Service mesh — mTLS, L7 observability, policy enforcement, no sidecars | `SOLO_ISTIO_LICENSE_KEY` | via kagent-enterprise install |
+
+In Solo Enterprise for kagent, agentgateway is installed as a waypoint proxy in the ambient mesh. They are tightly integrated — not separate installs.
 
 ## Ground Rules
 
@@ -78,7 +90,7 @@ The generator reads `scenarios.json` and fires them on a loop against the BFF AP
 
 ### Agents
 
-kagent CRDs in k8s. For local dev, agents run as plain Go HTTP servers that accept requests and call MCP tools. kagent supports Go ADK natively, so no Python dependency. Two agents:
+Solo Enterprise for kagent CRDs in k8s. Agents are `Agent` custom resources with `type: Declarative`, system prompts, and tool references to MCP servers. For local dev (docker-compose), agents run as plain Go HTTP servers that accept requests and call MCP tools. kagent supports Go ADK natively, so no Python dependency. Two agents:
 - **Mission Support Agent** — answers crew questions, searches KB, creates tickets
 - **KB Curator Agent** — de-duplicates articles, auto-tags, scores usefulness
 
@@ -96,9 +108,16 @@ Each service has a Dockerfile with multi-stage build (build stage + scratch/dist
 - How to run locally: `go run . [env vars]`
 - How to run as container: `docker build` and `docker run` with env vars
 - How to deploy to k8s: pointer to helm values or raw manifest
-- Works with OrbStack and kind for local k8s
+- Local k8s: OrbStack (preferred) or kind
 
-`docker-compose.yml` at the root runs the full stack locally.
+`docker-compose.yml` at the root runs the full stack locally (no Solo products required).
+
+### k8s Deployment (Solo Enterprise Products)
+
+For k8s deployment with the full Solo stack:
+- **Solo Enterprise for kagent**: Install via Helm per [quickstart](https://docs.solo.io/kagent-enterprise/docs/latest/quickstart/). Includes ambient mesh, agentgateway as waypoint, management UI, OTel, ClickHouse.
+- **Solo Enterprise for agentgateway**: Install via Helm per [install guide](https://docs.solo.io/agentgateway/2.3.x/install/helm). Provides LLM gateway with guardrails, failover, content routing.
+- License keys: `SOLO_ISTIO_LICENSE_KEY`, `GLOO_GATEWAY_LICENSE_KEY`, `AGENTGATEWAY_LICENSE_KEY`
 
 ---
 
@@ -110,16 +129,17 @@ Each service has a Dockerfile with multi-stage build (build stage + scratch/dist
 Activity Generator / UIs
         │
         ▼
-  agentgateway (ingress)
+  Solo Enterprise for agentgateway (ingress)
         │
         ▼
       BFF API ──────────────────────┐
         │                           │
         ▼                           ▼
   Mission Support Agent      KB Curator Agent
+  (kagent Agent CRD)         (kagent Agent CRD)
         │                           │
         ▼                           ▼
-  agentgateway (egress)      agentgateway (egress)
+  Solo Enterprise for agentgateway (egress — LLM traffic)
         │                           │
         ▼                           ▼
    LLM providers             LLM providers
@@ -134,16 +154,15 @@ KB Store  Ticket Store       KB Store  Ticket Store
          Crew Store (BFF direct access)
 ```
 
-All east-west traffic (agents ↔ MCP servers ↔ stores) runs on ambient mesh with mTLS and L7 observability.
+All east-west traffic (agents ↔ MCP servers ↔ stores) runs on the Solo distribution of Istio in ambient mode — mTLS and L7 observability with no sidecars. agentgateway is deployed as a waypoint proxy in the mesh.
 
-### Solo.io Product Coverage
+### Solo.io Product Demo Coverage
 
 | Product | Demo Moment |
 |---|---|
-| kagent | Both agents as CRDs, lifecycle management |
-| agentgateway | Ingress (user→BFF), Egress (agent→LLM), guardrails, failover, cost routing |
-| ambient mesh | mTLS + L7 observability on all east-west traffic, no sidecars |
-| agentregistry | MCP server registration and tool discovery |
+| Solo Enterprise for kagent | Both agents as `Agent` CRDs, declarative config, management UI, observability, tracing |
+| Solo Enterprise for agentgateway | Ingress (user→BFF), Egress (agent→LLM), guardrails, model failover, content-based routing |
+| Solo distribution of Istio (ambient) | mTLS + L7 observability on all east-west traffic, no sidecars, policy enforcement |
 
 ---
 
@@ -289,22 +308,28 @@ amss/
 
 ### Tickets (15)
 
-2×P1, 4×P2, 5×P3, 4×P4. Star ticket: AMSS-001 (WCS toilet pressure fault) with 5-comment resolution thread.
+2×P1, 4×P2, 7×P3, 2×P4. Star ticket: AMSS-001 (WCS toilet pressure fault) with 5-comment resolution thread.
 
 ---
 
 ## Build Order
 
-When building from scratch, work in this order:
-
+### v0.1.0-alpha1 — Foundation (stores)
 1. **Stores** (kb-store, ticket-store, crew-store) — no dependencies, test independently
-2. **MCP servers** (kb-mcp, ticket-mcp) — depend on stores being available at runtime
+
+### v0.1.0-alpha2 — Application layer
+2. **MCP servers** (kb-mcp, ticket-mcp) — depend on stores at runtime
 3. **BFF** — depends on stores and agents at runtime
 4. **Agents** (mission-support, kb-curator) — depend on MCP servers at runtime
 5. **Frontend** — depends on BFF at runtime
 6. **Activity generator** — depends on BFF at runtime
-7. **Helm charts** — packages everything for k8s
-8. **Scripts** — convenience wrappers
+7. **docker-compose.yml** — full local stack, no Solo products required
+
+### v0.1.0-alpha3 — Solo Enterprise integration
+8. **Helm charts** — k8s manifests, Solo Enterprise for kagent Agent CRDs, agentgateway config
+9. **Solo Enterprise for kagent** install + agent deployment
+10. **Solo Enterprise for agentgateway** install + LLM routing, guardrails, failover
+11. **Scripts** — setup, teardown, seed, demo
 
 Each step must have passing tests before moving to the next.
 

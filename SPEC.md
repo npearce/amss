@@ -2,7 +2,7 @@
 
 ## Overview
 
-AMSS is a demo application showcasing Solo.io's AI platform products through a fictional NASA Artemis mission support system. This spec defines data schemas, API contracts, and store behavior.
+AMSS is a demo application showcasing Solo.io's commercial AI platform (Solo Enterprise for kagent, Solo Enterprise for agentgateway, Solo distribution of Istio) through a fictional NASA Artemis mission support system. This spec defines data schemas, API contracts, and store behavior.
 
 See CLAUDE.md for ground rules (language, module structure, testing, build order).
 
