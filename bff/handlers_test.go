@@ -362,23 +362,32 @@ func TestHandleChat_InvalidBody(t *testing.T) {
 	}
 }
 
-// TestHandleChat_AgentError verifies agent connectivity errors return 500.
+// TestHandleChat_AgentError verifies that when the agent is unreachable (stub mode off),
+// the BFF falls back to the stub response and includes an unavailability note.
 func TestHandleChat_AgentError(t *testing.T) {
 	cfg := testConfig()
-	// Point to a port that nothing is listening on.
 	cfg.MissionSupportAgentURL = "http://127.0.0.1:1"
+	// StubMode defaults to false in testConfig; agent unreachable → graceful stub fallback.
 
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"crew_id":"wiseman-r","message":"hello"}`))
+	r := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"crew_id":"wiseman-r","message":"wcs pressure"}`))
 	NewServer(cfg).ServeHTTP(w, r)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("got status %d, want 500", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want 200 (stub fallback)", w.Code)
 	}
 	var env Envelope
 	json.NewDecoder(w.Body).Decode(&env)
-	if env.Error == nil || env.Error.Code != "INTERNAL_ERROR" {
-		t.Errorf("expected INTERNAL_ERROR, got %v", env.Error)
+	if env.Error != nil {
+		t.Errorf("expected no error in fallback mode, got %v", env.Error)
+	}
+	data, ok := env.Data.(map[string]interface{})
+	if !ok {
+		t.Fatal("data is not an object")
+	}
+	resp, _ := data["response"].(string)
+	if !strings.Contains(strings.ToLower(resp), "unavailable") {
+		t.Errorf("fallback response should mention agent unavailability, got %q", resp)
 	}
 }
 
@@ -417,17 +426,27 @@ func TestHandleCurate_Success(t *testing.T) {
 	}
 }
 
-// TestHandleCurate_AgentError verifies curator connectivity errors return 500.
+// TestHandleCurate_AgentError verifies that when the curator agent is unreachable (stub mode off),
+// the BFF falls back to the stub curator report.
 func TestHandleCurate_AgentError(t *testing.T) {
 	cfg := testConfig()
 	cfg.KBCuratorAgentURL = "http://127.0.0.1:1"
+	// StubMode defaults to false in testConfig; agent unreachable → graceful stub fallback.
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/curate", strings.NewReader(`{}`))
 	NewServer(cfg).ServeHTTP(w, r)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("got status %d, want 500", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want 200 (stub fallback)", w.Code)
+	}
+	var env Envelope
+	json.NewDecoder(w.Body).Decode(&env)
+	if env.Error != nil {
+		t.Errorf("expected no error in fallback mode, got %v", env.Error)
+	}
+	if env.Data == nil {
+		t.Error("expected stub curator report in data, got nil")
 	}
 }
 
@@ -482,5 +501,115 @@ func TestHandleReset(t *testing.T) {
 	}
 	if !called["crew"] {
 		t.Error("crew-store /reset was not called")
+	}
+}
+
+// TestHandleChat_StubMode verifies that STUB_MODE=true returns a stub response without
+// calling the agent.
+func TestHandleChat_StubMode(t *testing.T) {
+	cfg := testConfig()
+	cfg.StubMode = true
+	// Agent URL points nowhere; stub mode must not call it.
+	cfg.MissionSupportAgentURL = "http://127.0.0.1:1"
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(
+		`{"crew_id":"wiseman-r","message":"wcs flush procedure"}`))
+	NewServer(cfg).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200", w.Code)
+	}
+	var env Envelope
+	json.NewDecoder(w.Body).Decode(&env)
+	if env.Error != nil {
+		t.Fatalf("unexpected error: %v", env.Error)
+	}
+	data, ok := env.Data.(map[string]interface{})
+	if !ok {
+		t.Fatal("data is not an object")
+	}
+	resp, _ := data["response"].(string)
+	if resp == "" {
+		t.Error("stub response should not be empty")
+	}
+	// WCS keyword → KB-001 reference expected.
+	refs, _ := data["kb_articles_referenced"].([]interface{})
+	found := false
+	for _, ref := range refs {
+		if ref == "KB-001" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("stub response for WCS query should reference KB-001, got %v", refs)
+	}
+}
+
+// TestHandleChat_StubModeDefaultQuery verifies the fallback stub response for unknown queries.
+func TestHandleChat_StubModeDefaultQuery(t *testing.T) {
+	cfg := testConfig()
+	cfg.StubMode = true
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(
+		`{"crew_id":"wiseman-r","message":"what is for dinner tonight"}`))
+	NewServer(cfg).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200", w.Code)
+	}
+	var env Envelope
+	json.NewDecoder(w.Body).Decode(&env)
+	if env.Error != nil {
+		t.Fatalf("unexpected error: %v", env.Error)
+	}
+	data, _ := env.Data.(map[string]interface{})
+	refs, _ := data["kb_articles_referenced"].([]interface{})
+	if len(refs) != 0 {
+		t.Errorf("default stub response should have no KB refs, got %v", refs)
+	}
+}
+
+// TestHandleCurate_StubMode verifies that STUB_MODE=true returns the stub curator report.
+func TestHandleCurate_StubMode(t *testing.T) {
+	cfg := testConfig()
+	cfg.StubMode = true
+	cfg.KBCuratorAgentURL = "http://127.0.0.1:1"
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/curate", strings.NewReader(`{}`))
+	NewServer(cfg).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200", w.Code)
+	}
+	var env Envelope
+	json.NewDecoder(w.Body).Decode(&env)
+	if env.Error != nil {
+		t.Fatalf("unexpected error: %v", env.Error)
+	}
+	if env.Data == nil {
+		t.Fatal("expected curator report in data, got nil")
+	}
+	data, ok := env.Data.(map[string]interface{})
+	if !ok {
+		t.Fatal("data is not an object")
+	}
+	// Verify key fields of the stub report are present.
+	if data["articles_reviewed"] == nil {
+		t.Error("stub report missing articles_reviewed")
+	}
+	dups, _ := data["duplicates_flagged"].([]interface{})
+	if len(dups) != 3 {
+		t.Errorf("stub report should have 3 duplicates flagged, got %d", len(dups))
+	}
+	tagged, _ := data["tagged_articles"].([]interface{})
+	if len(tagged) != 4 {
+		t.Errorf("stub report should have 4 tagged articles, got %d", len(tagged))
+	}
+	scored, _ := data["scored_articles"].([]interface{})
+	if len(scored) != 5 {
+		t.Errorf("stub report should have 5 scored articles, got %d", len(scored))
 	}
 }

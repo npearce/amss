@@ -2,10 +2,8 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-COPY go.mod .
-COPY go.sum . 2>/dev/null || true
-RUN go mod download || true
-COPY *.go .
+COPY go.mod ./
+COPY *.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bff .
 

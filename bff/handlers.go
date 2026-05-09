@@ -115,10 +115,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		req.SessionID = fmt.Sprintf("sess-%s", req.CrewID)
 	}
 
-	agentResp, err := s.callMissionAgent(req)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("Agent error: %v", err))
-		return
+	var agentResp *ChatResponse
+	if s.cfg.StubMode {
+		agentResp = stubChatResponse(req.Message)
+	} else {
+		var err error
+		agentResp, err = s.callMissionAgent(req)
+		if err != nil {
+			agentResp = stubChatResponse(req.Message)
+			agentResp.Response = "[Agent unavailable — using knowledge base stub]\n\n" + agentResp.Response
+		}
 	}
 
 	s.logConversation(req, agentResp)
@@ -126,16 +132,25 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCurate(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.StubMode {
+		respondJSON(w, http.StatusOK, stubCuratorReport())
+		return
+	}
+
 	req, err := http.NewRequest(http.MethodPost, s.cfg.KBCuratorAgentURL+"/curate", r.Body)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to build request")
+		report := stubCuratorReport()
+		report.Summary = "[Curator agent unavailable] " + report.Summary
+		respondJSON(w, http.StatusOK, report)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("Curator agent error: %v", err))
+		report := stubCuratorReport()
+		report.Summary = "[Curator agent unavailable] " + report.Summary
+		respondJSON(w, http.StatusOK, report)
 		return
 	}
 	defer resp.Body.Close()

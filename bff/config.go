@@ -9,6 +9,7 @@ type Config struct {
 	CrewStoreURL           string
 	MissionSupportAgentURL string
 	KBCuratorAgentURL      string
+	StubMode               bool
 }
 
 func LoadConfig() *Config {
@@ -19,6 +20,7 @@ func LoadConfig() *Config {
 		CrewStoreURL:           getEnv("CREW_STORE_URL", "http://crew-store:8083"),
 		MissionSupportAgentURL: getEnv("MISSION_SUPPORT_AGENT_URL", "http://mission-support-agent:8090"),
 		KBCuratorAgentURL:      getEnv("KB_CURATOR_AGENT_URL", "http://kb-curator-agent:8091"),
+		StubMode:               getEnv("STUB_MODE", "true") != "false",
 	}
 }
 
