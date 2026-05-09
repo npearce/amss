@@ -504,6 +504,137 @@ func TestHandleReset(t *testing.T) {
 	}
 }
 
+// TestProxyAPIV1KBRoutes verifies /api/v1/kb/** is rewritten to /articles/** at the kb-store.
+func TestProxyAPIV1KBRoutes(t *testing.T) {
+	tests := []struct {
+		name         string
+		method       string
+		bffPath      string
+		wantBackend  string
+	}{
+		{"list articles", http.MethodGet, "/api/v1/kb", "/articles"},
+		{"get article", http.MethodGet, "/api/v1/kb/KB-001", "/articles/KB-001"},
+		{"create article", http.MethodPost, "/api/v1/kb", "/articles"},
+		{"update article", http.MethodPut, "/api/v1/kb/KB-001", "/articles/KB-001"},
+		{"delete article", http.MethodDelete, "/api/v1/kb/KB-001", "/articles/KB-001"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, gotPath, gotMethod := mockBackend(t, http.StatusOK, `{"data":{},"error":null}`)
+
+			cfg := testConfig()
+			cfg.KBStoreURL = mock.URL
+			bff := httptest.NewServer(NewServer(cfg))
+			t.Cleanup(bff.Close)
+
+			req, _ := http.NewRequest(tc.method, bff.URL+tc.bffPath, nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("got status %d, want 200", resp.StatusCode)
+			}
+			if *gotPath != tc.wantBackend {
+				t.Errorf("backend got path %q, want %q (path rewrite failed)", *gotPath, tc.wantBackend)
+			}
+			if *gotMethod != tc.method {
+				t.Errorf("backend got method %q, want %q", *gotMethod, tc.method)
+			}
+		})
+	}
+}
+
+// TestProxyAPIV1TicketRoutes verifies /api/v1/tickets/** strips /api/v1 at the ticket-store.
+func TestProxyAPIV1TicketRoutes(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		bffPath     string
+		wantBackend string
+	}{
+		{"list tickets", http.MethodGet, "/api/v1/tickets", "/tickets"},
+		{"get ticket", http.MethodGet, "/api/v1/tickets/AMSS-001", "/tickets/AMSS-001"},
+		{"create ticket", http.MethodPost, "/api/v1/tickets", "/tickets"},
+		{"update ticket", http.MethodPut, "/api/v1/tickets/AMSS-001", "/tickets/AMSS-001"},
+		{"add comment", http.MethodPost, "/api/v1/tickets/AMSS-001/comments", "/tickets/AMSS-001/comments"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, gotPath, gotMethod := mockBackend(t, http.StatusOK, `{"data":{},"error":null}`)
+
+			cfg := testConfig()
+			cfg.TicketStoreURL = mock.URL
+			bff := httptest.NewServer(NewServer(cfg))
+			t.Cleanup(bff.Close)
+
+			req, _ := http.NewRequest(tc.method, bff.URL+tc.bffPath, nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("got status %d, want 200", resp.StatusCode)
+			}
+			if *gotPath != tc.wantBackend {
+				t.Errorf("backend got path %q, want %q (path rewrite failed)", *gotPath, tc.wantBackend)
+			}
+			if *gotMethod != tc.method {
+				t.Errorf("backend got method %q, want %q", *gotMethod, tc.method)
+			}
+		})
+	}
+}
+
+// TestProxyAPIV1CrewRoutes verifies /api/v1/crew/** strips /api/v1 at the crew-store.
+func TestProxyAPIV1CrewRoutes(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		bffPath     string
+		wantBackend string
+	}{
+		{"list crew", http.MethodGet, "/api/v1/crew", "/crew"},
+		{"get crew member", http.MethodGet, "/api/v1/crew/wiseman-r", "/crew/wiseman-r"},
+		{"crew activity", http.MethodGet, "/api/v1/crew/wiseman-r/activity", "/crew/wiseman-r/activity"},
+		{"list conversations", http.MethodGet, "/api/v1/conversations", "/conversations"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, gotPath, gotMethod := mockBackend(t, http.StatusOK, `{"data":{},"error":null}`)
+
+			cfg := testConfig()
+			cfg.CrewStoreURL = mock.URL
+			bff := httptest.NewServer(NewServer(cfg))
+			t.Cleanup(bff.Close)
+
+			req, _ := http.NewRequest(tc.method, bff.URL+tc.bffPath, nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("got status %d, want 200", resp.StatusCode)
+			}
+			if *gotPath != tc.wantBackend {
+				t.Errorf("backend got path %q, want %q (path rewrite failed)", *gotPath, tc.wantBackend)
+			}
+			if *gotMethod != tc.method {
+				t.Errorf("backend got method %q, want %q", *gotMethod, tc.method)
+			}
+		})
+	}
+}
+
 // TestHandleChat_StubMode verifies that STUB_MODE=true returns a stub response without
 // calling the agent.
 func TestHandleChat_StubMode(t *testing.T) {

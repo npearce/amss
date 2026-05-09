@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 )
 
 type Envelope struct {
@@ -68,32 +69,61 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 
-	// KB Articles — proxy to kb-store
+	// ── Root-path routes (frontend dev via Vite proxy) ────────────
 	s.mux.HandleFunc("/articles", s.proxyTo(s.cfg.KBStoreURL))
 	s.mux.HandleFunc("/articles/{id}", s.proxyTo(s.cfg.KBStoreURL))
-
-	// Tickets — proxy to ticket-store
 	s.mux.HandleFunc("/tickets", s.proxyTo(s.cfg.TicketStoreURL))
 	s.mux.HandleFunc("/tickets/{id}", s.proxyTo(s.cfg.TicketStoreURL))
 	s.mux.HandleFunc("POST /tickets/{id}/comments", s.proxyTo(s.cfg.TicketStoreURL))
-
-	// Crew and conversations — proxy to crew-store
 	s.mux.HandleFunc("/crew", s.proxyTo(s.cfg.CrewStoreURL))
 	s.mux.HandleFunc("/crew/{id}", s.proxyTo(s.cfg.CrewStoreURL))
 	s.mux.HandleFunc("/crew/{id}/activity", s.proxyTo(s.cfg.CrewStoreURL))
 	s.mux.HandleFunc("/conversations", s.proxyTo(s.cfg.CrewStoreURL))
-
-	// Agent routes
 	s.mux.HandleFunc("POST /chat", s.handleChat)
 	s.mux.HandleFunc("POST /curate", s.handleCurate)
-
-	// Reset all stores
 	s.mux.HandleFunc("POST /reset", s.handleReset)
+
+	// ── /api/v1 routes (k8s ingress / agentgateway) ───────────────
+	// /api/v1/kb/**  → kb-store /articles/** (segment rename: kb → articles)
+	s.mux.Handle("/api/v1/kb", s.rewriteProxy(s.cfg.KBStoreURL, "/api/v1/kb", "/articles"))
+	s.mux.Handle("/api/v1/kb/", s.rewriteProxy(s.cfg.KBStoreURL, "/api/v1/kb", "/articles"))
+	// /api/v1/tickets/** → ticket-store /tickets/**
+	s.mux.Handle("/api/v1/tickets", s.rewriteProxy(s.cfg.TicketStoreURL, "/api/v1", ""))
+	s.mux.Handle("/api/v1/tickets/", s.rewriteProxy(s.cfg.TicketStoreURL, "/api/v1", ""))
+	// /api/v1/crew/** → crew-store /crew/**
+	s.mux.Handle("/api/v1/crew", s.rewriteProxy(s.cfg.CrewStoreURL, "/api/v1", ""))
+	s.mux.Handle("/api/v1/crew/", s.rewriteProxy(s.cfg.CrewStoreURL, "/api/v1", ""))
+	// /api/v1/conversations → crew-store /conversations
+	s.mux.Handle("/api/v1/conversations", s.rewriteProxy(s.cfg.CrewStoreURL, "/api/v1", ""))
+	s.mux.Handle("/api/v1/conversations/", s.rewriteProxy(s.cfg.CrewStoreURL, "/api/v1", ""))
+	// Agent and admin routes
+	s.mux.HandleFunc("POST /api/v1/chat", s.handleChat)
+	s.mux.HandleFunc("POST /api/v1/curator", s.handleCurate)
+	s.mux.HandleFunc("POST /api/v1/reset", s.handleReset)
 }
 
 func (s *Server) proxyTo(targetBase string) http.HandlerFunc {
 	target, _ := url.Parse(targetBase)
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	return proxy.ServeHTTP
+}
+
+// rewriteProxy proxies to targetBase, stripping stripPrefix from the request
+// path and prepending addPrefix before forwarding. Use this when the BFF path
+// segment differs from the store path (e.g. /api/v1/kb → /articles).
+func (s *Server) rewriteProxy(targetBase, stripPrefix, addPrefix string) http.HandlerFunc {
+	target, _ := url.Parse(targetBase)
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			req.Host = target.Host
+			req.URL.Path = addPrefix + strings.TrimPrefix(req.URL.Path, stripPrefix)
+			if req.URL.RawPath != "" {
+				req.URL.RawPath = addPrefix + strings.TrimPrefix(req.URL.RawPath, stripPrefix)
+			}
+		},
+	}
 	return proxy.ServeHTTP
 }
 
