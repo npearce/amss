@@ -124,7 +124,49 @@ curl http://localhost:8081/articles/KB-001 | jq .
 
 ### 1.3 Build and Test MCP Servers
 
-> **TODO**: MCP servers are being rebuilt using `kmcp init go`. This section will be updated with the kmcp-scaffolded workflow.
+MCP servers are scaffolded with `kmcp` and follow the kagent MCP tool pattern.
+
+**Scaffold (already done — only needed when creating from scratch):**
+
+```bash
+cd mcp-servers
+kmcp init go kb-mcp --go-module-name github.com/npearce/amss/mcp-servers/kb-mcp --no-git
+kmcp init go ticket-mcp --go-module-name github.com/npearce/amss/mcp-servers/ticket-mcp --no-git
+```
+
+**Build and test:**
+
+```bash
+cd mcp-servers/kb-mcp
+go build ./...
+go test ./... -v -race
+go vet ./...
+cd ../..
+```
+
+```bash
+cd mcp-servers/ticket-mcp
+go build ./...
+go test ./... -v -race
+go vet ./...
+cd ../..
+```
+
+**Run locally (stdio mode for testing with MCP inspector):**
+
+```bash
+cd mcp-servers/kb-mcp
+KB_STORE_URL=http://localhost:8081 go run ./cmd/server/
+```
+
+**Run locally (HTTP mode):**
+
+```bash
+cd mcp-servers/kb-mcp
+KB_STORE_URL=http://localhost:8081 go run ./cmd/server/ -http=:9001
+```
+
+Note: The kb-store must be running on :8081 for the MCP server to function.
 
 ### 1.4 Build and Test BFF
 
