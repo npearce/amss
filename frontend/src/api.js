@@ -1,10 +1,11 @@
 // API client for the AMSS BFF.
-// In dev, Vite proxies all these paths to localhost:8080.
-// In production/k8s, set VITE_API_URL to the BFF service URL.
+// In dev, Vite proxies /api/v1/* to localhost:8080.
+// In production/k8s, set VITE_API_URL to the BFF base URL (no trailing slash, no /api/v1).
 const BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
+const API = `${BASE}/api/v1`
 
 async function apiFetch(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${API}${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
@@ -37,11 +38,12 @@ export const fetchConversations = (params = {}) =>
   apiFetch(`/conversations${qs(params)}`)
 
 // ─── Knowledge Base ──────────────────────────────────────────
+// BFF maps /api/v1/kb → kb-store /articles
 export const fetchArticles = (params = {}) =>
-  apiFetch(`/articles${qs(params)}`)
+  apiFetch(`/kb${qs(params)}`)
 
 export const fetchArticle = (id) =>
-  apiFetch(`/articles/${id}`)
+  apiFetch(`/kb/${id}`)
 
 // ─── Tickets ─────────────────────────────────────────────────
 export const fetchTickets = (params = {}) =>
@@ -55,7 +57,7 @@ export const sendChat = (payload) =>
   apiFetch('/chat', { method: 'POST', body: JSON.stringify(payload) })
 
 export const runCurate = () =>
-  apiFetch('/curate', { method: 'POST', body: JSON.stringify({}) })
+  apiFetch('/curator', { method: 'POST', body: JSON.stringify({}) })
 
 // ─── Admin ───────────────────────────────────────────────────
 export const resetStores = () =>

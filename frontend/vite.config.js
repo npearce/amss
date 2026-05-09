@@ -7,16 +7,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Forward all BFF routes to the local BFF in dev mode.
-      // The BFF serves at root with no /api/v1 prefix.
-      '/health':        { target: 'http://localhost:8080', changeOrigin: true },
-      '/articles':      { target: 'http://localhost:8080', changeOrigin: true },
-      '/tickets':       { target: 'http://localhost:8080', changeOrigin: true },
-      '/crew':          { target: 'http://localhost:8080', changeOrigin: true },
-      '/conversations': { target: 'http://localhost:8080', changeOrigin: true },
-      '/chat':          { target: 'http://localhost:8080', changeOrigin: true },
-      '/curate':        { target: 'http://localhost:8080', changeOrigin: true },
-      '/reset':         { target: 'http://localhost:8080', changeOrigin: true },
+      // Forward all /api/v1/* requests to the local BFF in dev mode.
+      // VITE_API_URL is empty in dev, so the browser calls /api/v1/...
+      // which Vite proxies here. The BFF handles /api/v1/* natively.
+      '/api/v1': { target: 'http://localhost:8080', changeOrigin: true },
     },
   },
 })

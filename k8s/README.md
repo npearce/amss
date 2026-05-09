@@ -1,6 +1,6 @@
 # AMSS — Kubernetes Deployment
 
-Local k8s manifests for the AMSS application (Phase 2 — stores + MCP servers + BFF).
+Local k8s manifests for the AMSS application (Phase 2 — stores + MCP servers + BFF + frontend).
 Agents come in Phase 3 via kagent Agent CRDs.
 
 ## Prerequisites
@@ -23,62 +23,78 @@ Run from the **repo root**:
 ```
 
 The script:
-1. Builds all 6 container images (`amss/kb-store`, `amss/ticket-store`, `amss/crew-store`, `amss/kb-mcp`, `amss/ticket-mcp`, `amss/bff`)
-2. Applies manifests in order (namespace → stores → MCP servers → BFF)
+1. Builds all 7 container images (`amss/kb-store`, `amss/ticket-store`, `amss/crew-store`, `amss/kb-mcp`, `amss/ticket-mcp`, `amss/bff`, `amss/frontend`)
+2. Applies manifests in order (namespace → stores → MCP servers → BFF → frontend)
 3. Waits for all deployments to reach `Ready`
-4. Prints the access URL
+4. Prints the access URLs
 
 **kind users**: uncomment the `kind load docker-image` lines in `deploy.sh` before running.
 
-## Access the BFF
+## Access the Application
 
 ### OrbStack (NodePort — no extra steps)
 
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:30081 |
+| BFF API | http://localhost:30080 |
+
 ```bash
+# Frontend
+open http://localhost:30081
+
+# BFF health
 curl http://localhost:30080/health
 ```
 
 ### Any cluster (port-forward)
 
 ```bash
-kubectl port-forward svc/bff 8080:8080 -n amss
-# In another terminal:
-curl http://localhost:8080/health
+kubectl port-forward svc/frontend 3000:80 -n amss &
+kubectl port-forward svc/bff 8080:8080 -n amss &
+# Frontend at http://localhost:3000
+# BFF at http://localhost:8080
 ```
 
 ## Verify Each Service
 
-All commands assume port-forward to BFF is active on 8080.
+All curl commands use the BFF NodePort directly. Substitute `localhost:8080` if using port-forward.
+
+### Frontend
+```bash
+open http://localhost:30081
+# Astronaut Chat at /chat, Ground Control at /ground-control
+```
 
 ### BFF health
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:30080/health
 # {"data":{"status":"ok","service":"bff"},"error":null}
 ```
 
-### KB store (via BFF proxy)
+### KB store (via BFF — /api/v1 prefix)
 ```bash
-curl http://localhost:8080/articles | jq '.data.total'
+curl http://localhost:30080/api/v1/kb | jq '.data.total'
 # 30
-curl http://localhost:8080/articles/KB-001 | jq '.data.title'
+curl http://localhost:30080/api/v1/kb/KB-001 | jq '.data.title'
 ```
 
-### Ticket store (via BFF proxy)
+### Ticket store (via BFF)
 ```bash
-curl http://localhost:8080/tickets | jq '.data.total'
+curl http://localhost:30080/api/v1/tickets | jq '.data.total'
 # 15
-curl http://localhost:8080/tickets/AMSS-001 | jq '.data.title'
+curl http://localhost:30080/api/v1/tickets/AMSS-001 | jq '.data.title'
 ```
 
-### Crew store (via BFF proxy)
+### Crew store (via BFF)
 ```bash
-curl http://localhost:8080/crew | jq '.data.total'
+curl http://localhost:30080/api/v1/crew | jq '.data.total'
 # 20
 ```
 
 ### Chat (stub mode — no agent required)
 ```bash
-curl -s -X POST http://localhost:8080/chat \
+curl -s -X POST http://localhost:30080/api/v1/chat \
   -H 'Content-Type: application/json' \
   -d '{"crew_id":"wiseman-r","session_id":"test-001","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
   | jq '.data'
@@ -86,7 +102,7 @@ curl -s -X POST http://localhost:8080/chat \
 
 ### KB curation (stub mode)
 ```bash
-curl -s -X POST http://localhost:8080/curate \
+curl -s -X POST http://localhost:30080/api/v1/curator \
   -H 'Content-Type: application/json' \
   -d '{}' \
   | jq '.data.duplicates_flagged'
@@ -94,20 +110,17 @@ curl -s -X POST http://localhost:8080/curate \
 
 ### Reset all stores to seed data
 ```bash
-curl -s -X POST http://localhost:8080/reset | jq '.data'
+curl -s -X POST http://localhost:30080/api/v1/reset | jq '.data'
 ```
 
 ### Direct store access (port-forward to individual services)
 ```bash
-# KB store
 kubectl port-forward svc/kb-store 8081:8081 -n amss
 curl http://localhost:8081/health
 
-# Ticket store
 kubectl port-forward svc/ticket-store 8082:8082 -n amss
 curl http://localhost:8082/health
 
-# Crew store
 kubectl port-forward svc/crew-store 8083:8083 -n amss
 curl http://localhost:8083/health
 ```
@@ -116,6 +129,10 @@ curl http://localhost:8083/health
 
 ### Image pull policy
 All deployments use `imagePullPolicy: Never` — images must be built locally before deploying. The deploy script handles this.
+
+### Frontend API URL
+
+`VITE_API_URL=http://localhost:30080` is baked into the static build at image build time (Vite replaces it at bundle time). The SPA appends `/api/v1` internally, so all API calls go to `http://localhost:30080/api/v1/...`. Because the SPA runs in the user's browser, it must reach the BFF at a host-reachable address — cluster DNS (`bff.amss.svc.cluster.local`) is not accessible from the browser. The NodePort `localhost:30080` works for OrbStack and kind with port-forward.
 
 ### STUB_MODE
 The BFF runs with `STUB_MODE=true`. Chat and curator endpoints return canned responses that cite real KB article IDs. This will be flipped to `false` in Phase 3 when kagent agents are deployed.
