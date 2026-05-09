@@ -1,20 +1,22 @@
-FROM golang:1.22-alpine AS builder
+# Build stage
+FROM golang:1.23.0-alpine AS builder
 
 WORKDIR /app
 
 COPY go.mod go.sum ./
 RUN go mod download
-COPY *.go ./
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o kb-mcp .
+COPY . .
 
-FROM scratch
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ./cmd/server
 
-COPY --from=builder /app/kb-mcp /kb-mcp
+# Final stage
+FROM alpine
 
-EXPOSE 9001
+WORKDIR /app
 
-ENV PORT=9001
-ENV KB_STORE_URL=http://kb-store:8081
+COPY --from=builder /app/server /app/server
 
-ENTRYPOINT ["/kb-mcp"]
+EXPOSE 8080
+
+ENTRYPOINT ["/app/server"] 

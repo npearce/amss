@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"bytes"
@@ -29,22 +29,18 @@ type Article struct {
 	LastCuratedAt       *string  `json:"last_curated_at"`
 }
 
-type Envelope struct {
-	Data  interface{} `json:"data"`
-	Error *ErrorInfo  `json:"error"`
-}
-
 type ErrorInfo struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
 type KBClient struct {
-	baseURL string
+	baseURL    string
+	httpClient *http.Client
 }
 
-func NewKBClient(baseURL string) *KBClient {
-	return &KBClient{baseURL: baseURL}
+func New(baseURL string) *KBClient {
+	return &KBClient{baseURL: baseURL, httpClient: http.DefaultClient}
 }
 
 func (c *KBClient) Search(category, tags, search string, limit, offset int) ([]*Article, int, error) {
@@ -65,63 +61,62 @@ func (c *KBClient) Search(category, tags, search string, limit, offset int) ([]*
 		params.Set("offset", strconv.Itoa(offset))
 	}
 
-	url := fmt.Sprintf("%s/articles?%s", c.baseURL, params.Encode())
-	resp, err := http.Get(url)
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/articles?%s", c.baseURL, params.Encode()))
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	var envelope Envelope
-	if err := json.Unmarshal(body, &envelope); err != nil {
+
+	var env struct {
+		Data *struct {
+			Articles []*Article `json:"articles"`
+			Total    int        `json:"total"`
+		} `json:"data"`
+		Error *ErrorInfo `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, 0, err
 	}
-
-	if envelope.Error != nil {
-		return nil, 0, fmt.Errorf("API error: %s", envelope.Error.Message)
+	if env.Error != nil {
+		return nil, 0, fmt.Errorf("%s: %s", env.Error.Code, env.Error.Message)
 	}
-
-	data, ok := envelope.Data.(map[string]interface{})
-	if !ok {
-		return nil, 0, fmt.Errorf("unexpected response format")
+	if env.Data == nil {
+		return []*Article{}, 0, nil
 	}
-
-	articlesRaw, _ := json.Marshal(data["articles"])
-	var articles []*Article
-	json.Unmarshal(articlesRaw, &articles)
-
-	total := int(data["total"].(float64))
-
-	return articles, total, nil
+	articles := env.Data.Articles
+	if articles == nil {
+		articles = []*Article{}
+	}
+	return articles, env.Data.Total, nil
 }
 
 func (c *KBClient) GetArticle(id string) (*Article, error) {
-	url := fmt.Sprintf("%s/articles/%s", c.baseURL, id)
-	resp, err := http.Get(url)
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/articles/%s", c.baseURL, id))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	var envelope Envelope
-	if err := json.Unmarshal(body, &envelope); err != nil {
+	var env struct {
+		Data  *Article   `json:"data"`
+		Error *ErrorInfo `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, err
 	}
-
-	if envelope.Error != nil {
-		return nil, fmt.Errorf("article not found")
+	if env.Error != nil {
+		return nil, fmt.Errorf("%s: %s", env.Error.Code, env.Error.Message)
 	}
-
-	articleRaw, _ := json.Marshal(envelope.Data)
-	var article Article
-	json.Unmarshal(articleRaw, &article)
-
-	return &article, nil
+	return env.Data, nil
 }
 
 func (c *KBClient) CreateArticle(title, body, category, createdBy string, tags []string) (*Article, error) {
+	if tags == nil {
+		tags = []string{}
+	}
 	payload := map[string]interface{}{
 		"title":      title,
 		"body":       body,
@@ -129,9 +124,8 @@ func (c *KBClient) CreateArticle(title, body, category, createdBy string, tags [
 		"created_by": createdBy,
 		"tags":       tags,
 	}
-
 	payloadBytes, _ := json.Marshal(payload)
-	resp, err := http.Post(
+	resp, err := c.httpClient.Post(
 		fmt.Sprintf("%s/articles", c.baseURL),
 		"application/json",
 		bytes.NewReader(payloadBytes),
@@ -142,52 +136,48 @@ func (c *KBClient) CreateArticle(title, body, category, createdBy string, tags [
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	var envelope Envelope
-	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
+	var env struct {
+		Data  *Article   `json:"data"`
+		Error *ErrorInfo `json:"error"`
+	}
+	if err := json.Unmarshal(bodyBytes, &env); err != nil {
 		return nil, err
 	}
-
-	if envelope.Error != nil {
-		return nil, fmt.Errorf("creation failed: %s", envelope.Error.Message)
+	if env.Error != nil {
+		return nil, fmt.Errorf("%s: %s", env.Error.Code, env.Error.Message)
 	}
-
-	articleRaw, _ := json.Marshal(envelope.Data)
-	var article Article
-	json.Unmarshal(articleRaw, &article)
-
-	return &article, nil
+	return env.Data, nil
 }
 
 func (c *KBClient) UpdateArticle(id string, updates map[string]interface{}) (*Article, error) {
 	payloadBytes, _ := json.Marshal(updates)
-
-	req, _ := http.NewRequest("PUT", fmt.Sprintf("%s/articles/%s", c.baseURL, id), bytes.NewReader(payloadBytes))
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/articles/%s", c.baseURL, id), bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	var envelope Envelope
-	if err := json.Unmarshal(body, &envelope); err != nil {
+	var env struct {
+		Data  *Article   `json:"data"`
+		Error *ErrorInfo `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, err
 	}
-
-	if envelope.Error != nil {
-		return nil, fmt.Errorf("update failed: %s", envelope.Error.Message)
+	if env.Error != nil {
+		return nil, fmt.Errorf("%s: %s", env.Error.Code, env.Error.Message)
 	}
-
-	articleRaw, _ := json.Marshal(envelope.Data)
-	var article Article
-	json.Unmarshal(articleRaw, &article)
-
-	return &article, nil
+	return env.Data, nil
 }
 
-func formatArticle(a *Article) string {
+// FormatArticle renders a full article as a human-readable markdown-ish string.
+func FormatArticle(a *Article) string {
 	tags := strings.Join(a.Tags, ", ")
 	if tags == "" {
 		tags = "(none)"
@@ -197,25 +187,23 @@ func formatArticle(a *Article) string {
 		curatorTags = "(none)"
 	}
 
-	result := fmt.Sprintf("**%s: %s**\n\n", a.ID, a.Title)
-	result += fmt.Sprintf("Category: %s\n", a.Category)
-	result += fmt.Sprintf("Tags: %s\n", tags)
-	result += fmt.Sprintf("Curator Tags: %s\n", curatorTags)
-	result += fmt.Sprintf("Created: %s by %s\n", a.CreatedAt, a.CreatedBy)
-	result += fmt.Sprintf("Updated: %s\n", a.UpdatedAt)
-	result += fmt.Sprintf("Reference Count: %d\n\n", a.ReferenceCount)
+	s := fmt.Sprintf("**%s: %s**\n\n", a.ID, a.Title)
+	s += fmt.Sprintf("Category: %s\n", a.Category)
+	s += fmt.Sprintf("Tags: %s\n", tags)
+	s += fmt.Sprintf("Curator Tags: %s\n", curatorTags)
+	s += fmt.Sprintf("Created: %s by %s\n", a.CreatedAt, a.CreatedBy)
+	s += fmt.Sprintf("Updated: %s\n", a.UpdatedAt)
+	s += fmt.Sprintf("Reference Count: %d\n", a.ReferenceCount)
 
 	if a.UsefulnessScore != nil {
-		result += fmt.Sprintf("Usefulness Score: %.2f\n", *a.UsefulnessScore)
+		s += fmt.Sprintf("Usefulness Score: %.2f\n", *a.UsefulnessScore)
 	}
 	if a.DuplicateOf != nil {
-		result += fmt.Sprintf("Marked as duplicate of: %s\n", *a.DuplicateOf)
+		s += fmt.Sprintf("Duplicate of: %s\n", *a.DuplicateOf)
 	}
 	if a.CuratorNotes != nil {
-		result += fmt.Sprintf("Curator Notes: %s\n", *a.CuratorNotes)
+		s += fmt.Sprintf("Curator Notes: %s\n", *a.CuratorNotes)
 	}
-
-	result += fmt.Sprintf("\n%s", a.Body)
-
-	return result
+	s += fmt.Sprintf("\n%s", a.Body)
+	return s
 }

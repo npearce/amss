@@ -1,98 +1,63 @@
-# KB MCP — Knowledge Base Model Context Protocol Server
+# KB MCP Server
 
-Go MCP server that wraps KB Store REST APIs as tools. Agents use these tools to search, read, create, and update KB articles.
+MCP server that wraps the KB store REST API as tools for use by AI agents. Built with the official Go MCP SDK and the kmcp scaffold pattern.
+
+**Default transport**: stdio (for use with kagent / Claude Desktop)  
+**Optional transport**: streamable HTTP via `--http` flag
+
+## Tools
+
+| Tool | Description |
+|---|---|
+| `search_kb` | Search articles by text, category, or tags |
+| `read_kb_article` | Read full article by ID |
+| `create_kb_article` | Create a new article (title, body, category required) |
+| `update_kb_article` | Partial update — curator fields: usefulness_score, duplicate_of, curator_notes, curator_tags |
+| `list_kb_categories` | Returns the 10 valid category values |
+
+## Environment Variables
+
+| Var | Default | Description |
+|---|---|---|
+| `KB_STORE_URL` | `http://kb-store:8081` | KB store base URL |
 
 ## Build
 
 ```bash
-cd mcp-servers/kb-mcp
-go build -o kb-mcp .
+go build -o server ./cmd/server
 ```
 
 ## Test
 
 ```bash
 go test ./... -v
+go test ./... -v -race
 ```
 
-## Run Locally
+## Run locally (stdio mode)
 
 ```bash
-go run . [-port 9001] [-kb-store-url http://kb-store:8081]
+KB_STORE_URL=http://localhost:8081 go run ./cmd/server
 ```
 
-Or with environment variables:
-```bash
-PORT=9001 KB_STORE_URL=http://kb-store:8081 go run .
-```
-
-## Run as Container
+## Run locally (HTTP mode)
 
 ```bash
-docker build -t kb-mcp:latest .
-docker run -p 9001:9001 \
-  -e KB_STORE_URL=http://kb-store:8081 \
-  kb-mcp:latest
+KB_STORE_URL=http://localhost:8081 go run ./cmd/server --http :9001
 ```
 
-## MCP Tools
+## Run as container
 
-### `search_kb`
-Search knowledge base articles.
+```bash
+docker build -t amss-kb-mcp .
 
-**Arguments:**
-- `query` (string) — search query
-- `category` (string) — filter by category
-- `tags` (string) — comma-separated tags
-- `limit` (int) — max results
-- `offset` (int) — pagination offset
+# stdio mode (default)
+docker run --rm -i amss-kb-mcp
 
-**Returns:** List of matching articles with titles and IDs.
+# HTTP mode
+docker run -p 9001:9001 amss-kb-mcp /app/server --http :9001
+```
 
-### `read_kb`
-Get full details of an article by ID.
+## Deploy to k8s
 
-**Arguments:**
-- `id` (string) — article ID (e.g., KB-001)
-
-**Returns:** Full article with body, metadata, curator notes, etc.
-
-### `create_kb`
-Create a new KB article.
-
-**Arguments:**
-- `title` (string) — article title
-- `body` (string) — article body (markdown)
-- `category` (string) — category (required)
-- `tags` (array) — tags
-- `created_by` (string) — creator ID
-
-**Returns:** Created article with auto-assigned ID.
-
-### `update_kb`
-Partially update a KB article.
-
-**Arguments:**
-- `id` (string) — article ID
-- All other fields optional (title, body, category, tags, usefulness_score, duplicate_of, curator_notes, curator_tags)
-
-**Returns:** Updated article.
-
-## Architecture
-
-- Connects to KB Store via HTTP (KB_STORE_URL env var)
-- Exposes 4 tools following MCP protocol
-- Tool results formatted as markdown for agent readability
-- Error handling with descriptive messages
-
-## Environment Variables
-
-| Variable       | Default            | Description        |
-|----------------|--------------------|-------------------|
-| `PORT`         | `9001`             | Listen port        |
-| `KB_STORE_URL` | `http://kb-store:8081` | KB Store base URL  |
-
-## Dependencies
-
-- Go 1.22+
-- github.com/modelcontextprotocol/go-sdk (MCP SDK)
+See `helm/amss/values.yaml` for service configuration. The KB MCP server runs in-mesh with ambient mTLS alongside the KB store.
