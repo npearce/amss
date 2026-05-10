@@ -1,6 +1,14 @@
 // API client for the AMSS BFF.
-// In dev, Vite proxies /api/v1/* to localhost:8080.
-// In production/k8s, set VITE_API_URL to the BFF base URL (no trailing slash, no /api/v1).
+//
+// Default (VITE_API_URL unset): API calls use /api/v1/... as a relative path.
+// This works in two cases:
+//   - Dev: Vite proxies /api/v1/* → localhost:8080 (BFF)
+//   - k8s via agentgateway: gateway routes /api/v1/* → bff service, /* → frontend;
+//     both are behind the same host so relative paths resolve correctly.
+//
+// Set VITE_API_URL only when the BFF is on a different host than the frontend
+// (e.g. VITE_API_URL=http://localhost:30080 for direct NodePort access without
+// agentgateway). The value must be the base host with no trailing slash or /api/v1.
 const BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
 const API = `${BASE}/api/v1`
 
