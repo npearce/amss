@@ -1,0 +1,21 @@
+name: ticket-mcp
+framework: mcp-go
+version: 0.1.0
+description: MCP server built with mcp-go
+secrets:
+    local:
+        enabled: false
+        provider: env
+        file: .env.local
+    production:
+        enabled: false
+        provider: kubernetes
+        secretName: ticket-mcp-secrets-production
+        namespace: default
+    staging:
+        enabled: false
+        provider: kubernetes
+        secretName: ticket-mcp-secrets-staging
+        namespace: default
+created_at: 2026-05-09T09:48:55.60638-07:00
+updated_at: 2026-05-09T09:48:55.677293-07:00

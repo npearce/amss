@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kb-mcp
+  namespace: amss
+  labels:
+    app.kubernetes.io/name: kb-mcp
+    app.kubernetes.io/part-of: amss
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kb-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kb-mcp
+        app.kubernetes.io/part-of: amss
+    spec:
+      containers:
+      - name: kb-mcp
+        image: amss/kb-mcp:latest
+        imagePullPolicy: Never
+        # Run in streamable HTTP mode so agents can reach it over the network.
+        # Default (no flag) is stdio, which only works for local subprocess use.
+        args: ["--http", ":9001"]
+        ports:
+        - containerPort: 9001
+        env:
+        - name: KB_STORE_URL
+          value: http://kb-store.amss.svc.cluster.local:8081
+        # tcpSocket probe: the MCP server has no /health endpoint; port acceptance
+        # is a sufficient liveness signal for a stateless tool proxy.
+        readinessProbe:
+          tcpSocket:
+            port: 9001
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: 9001
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 100m
+          limits:
+            memory: 128Mi
+            cpu: 200m
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kb-mcp
+  namespace: amss
+  labels:
+    app.kubernetes.io/name: kb-mcp
+    app.kubernetes.io/part-of: amss
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kb-mcp
+  ports:
+  - port: 9001
+    targetPort: 9001
+    protocol: TCP

@@ -1,0 +1,26 @@
+# BFF external access via NodePort.
+#
+# OrbStack: the NodePort is accessible at http://localhost:30080
+# kind:     find the node IP with `kubectl get nodes -o wide`, then http://<node-ip>:30080
+#
+# Alternative (works on any cluster, no NodePort needed):
+#   kubectl port-forward svc/bff 8080:8080 -n amss
+#   then curl http://localhost:8080/health
+#
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff-nodeport
+  namespace: amss
+  labels:
+    app.kubernetes.io/name: bff
+    app.kubernetes.io/part-of: amss
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: bff
+  ports:
+  - port: 8080
+    targetPort: 8080
+    nodePort: 30080
+    protocol: TCP
