@@ -1,0 +1,26 @@
+# ── Node ─────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+
+# ── Go binaries ───────────────────────────────────────────────
+bff/bff
+stores/kb-store/kb-store
+stores/ticket-store/ticket-store
+stores/crew-store/crew-store
+mcp-servers/kb-mcp/server
+mcp-servers/ticket-mcp/server
+
+# ── Environment ───────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editor ───────────────────────────────────────────────────
+.idea/
+*.swp
+*.swo

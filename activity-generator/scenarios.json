@@ -1,0 +1,88 @@
+[
+  {
+    "name": "Create P3 ticket — thruster calibration anomaly",
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/tickets",
+        "body": {
+          "title": "Thruster 4 calibration drift detected",
+          "description": "Automated telemetry shows thruster 4 specific impulse reading 2.3% below nominal. Delta-V budget impact is within margin but trending. Requesting engineering review.",
+          "severity": "P3",
+          "status": "open",
+          "mission": "artemis-iv",
+          "assignee": "crew-tanaka",
+          "tags": ["propulsion", "thruster", "calibration"]
+        },
+        "description": "open a new P3 propulsion ticket"
+      }
+    ]
+  },
+  {
+    "name": "Create and close P4 ticket — routine comms window log",
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/tickets",
+        "body": {
+          "title": "Scheduled DSN contact — 34m window completed",
+          "description": "Routine Deep Space Network contact window completed. All telemetry nominal. No action items.",
+          "severity": "P4",
+          "status": "open",
+          "mission": "artemis-ii",
+          "assignee": "crew-osei",
+          "tags": ["comms", "dsn", "routine"]
+        },
+        "description": "log the completed DSN window as a P4 ticket"
+      },
+      {
+        "method": "PATCH",
+        "path": "/tickets/{{prev.id}}",
+        "body": {
+          "status": "closed"
+        },
+        "description": "close the ticket immediately — no action required"
+      }
+    ]
+  },
+  {
+    "name": "Create KB article — EVA suit pressure checklist",
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/articles",
+        "body": {
+          "title": "EVA Suit Pre-Egress Pressure Verification Checklist",
+          "category": "eva",
+          "body": "## Purpose\nVerify suit integrity before each EVA egress.\n\n## Steps\n1. Don suit and connect umbilical.\n2. Perform suit donning checks per PLSS checklist.\n3. Pressurize to 4.3 psi; hold 5 minutes.\n4. Verify pressure loss < 0.1 psi — if exceeded, abort and notify CAPCOM.\n5. Switch to O2 prebreathe protocol (60 min at 10.2 psi cabin).\n6. Final go/no-go from Flight Surgeon before egress.\n\n## References\n- EMU Operations Manual, Section 7.4\n- PLSS Checklist Card EVA-02",
+          "tags": ["eva", "suit", "pressure", "checklist", "pre-egress"]
+        },
+        "description": "publish a new EVA suit pressure checklist article"
+      }
+    ]
+  },
+  {
+    "name": "Create and archive KB article — superseded power procedure",
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/articles",
+        "body": {
+          "title": "Solar Array Manual Retrack Procedure (Rev A — superseded)",
+          "category": "power",
+          "body": "## Status\nThis procedure is superseded by Rev B. Retained for reference only.\n\n## Legacy Steps\n1. Inhibit auto-track via GNC console.\n2. Select MANUAL on SARJ panel.\n3. Command retrack at 0.5 deg/s.\n4. Monitor current draw; abort if > 8A.\n5. Re-enable auto-track after retrack complete.",
+          "tags": ["power", "solar-array", "manual", "superseded"]
+        },
+        "description": "publish the old solar array procedure (will be archived immediately)"
+      },
+      {
+        "method": "PATCH",
+        "path": "/articles/{{prev.id}}",
+        "body": {
+          "archived": true
+        },
+        "description": "archive the superseded article so curators can demo the duplicates workflow"
+      }
+    ]
+  }
+]

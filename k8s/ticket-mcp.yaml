@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticket-mcp
+  namespace: amss
+  labels:
+    app.kubernetes.io/name: ticket-mcp
+    app.kubernetes.io/part-of: amss
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ticket-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ticket-mcp
+        app.kubernetes.io/part-of: amss
+    spec:
+      containers:
+      - name: ticket-mcp
+        image: amss/ticket-mcp:latest
+        imagePullPolicy: Never
+        # Run in streamable HTTP mode so agents can reach it over the network.
+        args: ["--http", ":9002"]
+        ports:
+        - containerPort: 9002
+        env:
+        - name: TICKET_STORE_URL
+          value: http://ticket-store.amss.svc.cluster.local:8082
+        readinessProbe:
+          tcpSocket:
+            port: 9002
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: 9002
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 100m
+          limits:
+            memory: 128Mi
+            cpu: 200m
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ticket-mcp
+  namespace: amss
+  labels:
+    app.kubernetes.io/name: ticket-mcp
+    app.kubernetes.io/part-of: amss
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ticket-mcp
+  ports:
+  - port: 9002
+    targetPort: 9002
+    protocol: TCP

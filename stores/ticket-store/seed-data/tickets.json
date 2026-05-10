@@ -1,0 +1,444 @@
+{
+  "tickets": [
+    {
+      "id": "AMSS-001",
+      "title": "WCS pressure anomaly during translunar coast",
+      "description": "Waste Collection System showing intermittent PRESS FAULT on panel C3. Manual flush restored function temporarily but fault recurred after approximately 2 hours. Crew has contained situation with backup WCS bag system. This is a quality-of-life issue but not yet a health hazard. Requesting ground support for permanent fix.",
+      "severity": "P2",
+      "status": "resolved",
+      "category": "life-support",
+      "reported_by": "wiseman-r",
+      "assigned_to": "gc-eclss",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-08T14:35:00Z",
+      "updated_at": "2026-05-09T08:00:00Z",
+      "resolved_at": "2026-05-09T08:00:00Z",
+      "kb_articles_referenced": ["KB-001"],
+      "resolution": "Pressure relief valve WCS-PRV-03 had debris blockage from manufacturing residue that worked loose in microgravity. Ground control walked crew through disassembly and cleaning per KB-001 procedure with modification: extended flush cycle from 30s to 45s resolved the recurring fault. Crew commander Wiseman confirmed stable operation after 12-hour monitoring period. Recommend updating KB-001 to make 45s the default flush duration for microgravity operations.",
+      "comments": [
+        {
+          "author": "wiseman-r",
+          "timestamp": "2026-05-08T14:35:00Z",
+          "text": "First noticed fault during post-sleep checkout. Tried standard reset (power cycle), fault returned within 20 minutes. The crew is not amused."
+        },
+        {
+          "author": "gc-eclss",
+          "timestamp": "2026-05-08T16:00:00Z",
+          "text": "Telemetry confirms pressure oscillation in WCS-PRV-03 line. Pattern suggests particulate blockage rather than mechanical failure. Uploading modified flush procedure with extended cycle time."
+        },
+        {
+          "author": "hansen-j",
+          "timestamp": "2026-05-08T18:30:00Z",
+          "text": "Performed PRV-03 disassembly per ground instructions. Found small metallic debris fragment lodged in valve seat. Cleaned with alcohol wipe, reinstalled. Running test flush now."
+        },
+        {
+          "author": "hansen-j",
+          "timestamp": "2026-05-08T19:00:00Z",
+          "text": "Test flush successful with 45s cycle. Pressure nominal at 13.2 psi. Will monitor overnight."
+        },
+        {
+          "author": "wiseman-r",
+          "timestamp": "2026-05-09T07:45:00Z",
+          "text": "Post-sleep checkout: WCS operating nominally. No pressure faults overnight. The crew thanks ground control for the rapid turnaround. Please tell the WCS vendor we have feedback."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-002",
+      "title": "CO2 scrubber cartridge replacement ahead of schedule",
+      "description": "CO2 levels rising faster than expected. Cartridge B2 showing reduced absorption efficiency at MET 72:15:00. Current reading 6200 ppm, trending up. Normal replacement not scheduled for another 8 hours.",
+      "severity": "P3",
+      "status": "resolved",
+      "category": "life-support",
+      "reported_by": "koch-c",
+      "assigned_to": "gc-eclss",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-10T06:15:00Z",
+      "updated_at": "2026-05-10T08:00:00Z",
+      "resolved_at": "2026-05-10T08:00:00Z",
+      "kb_articles_referenced": ["KB-002"],
+      "resolution": "Cartridge B2 was from a batch with slightly reduced LiOH packing density (lot 2025-Q3-447). Crew replaced early per standard procedure in KB-002. CO2 returned to 4100 ppm within 10 minutes. Ground control flagged lot number to vendor and adjusted replacement schedule for remaining cartridges from same lot: 20hr cycle instead of 24hr.",
+      "comments": [
+        {
+          "author": "koch-c",
+          "timestamp": "2026-05-10T06:15:00Z",
+          "text": "CO2 at 6200 and climbing about 200 ppm/hr. Not emergency level yet but we'll hit 8000 in about 9 hours at this rate."
+        },
+        {
+          "author": "gc-eclss",
+          "timestamp": "2026-05-10T06:45:00Z",
+          "text": "Concur with early replacement. Proceed per KB-002. Note the lot number on used cartridge packaging for our records."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-003",
+      "title": "Intermittent Ka-band comms dropout during lunar orbit insertion",
+      "description": "Ka-band link dropping during LOI burn prep. Auto-track losing lock every 3-5 minutes, requiring manual repoint. S-band backup is functional but low-rate only. Need reliable high-rate comms for LOI burn monitoring.",
+      "severity": "P1",
+      "status": "resolved",
+      "category": "comms",
+      "reported_by": "glover-v",
+      "assigned_to": "gc-comm",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-12T02:00:00Z",
+      "updated_at": "2026-05-12T04:30:00Z",
+      "resolved_at": "2026-05-12T04:30:00Z",
+      "kb_articles_referenced": ["KB-003", "KB-022"],
+      "resolution": "Ka-band antenna gimbal had thermal-induced pointing bias after extended sun exposure during translunar coast. Auto-track algorithm was hunting around the bias. Ground control uploaded corrected pointing offset table accounting for thermal expansion. Manual repoint per KB-022 confirmed solid lock. Auto-track resumed with corrected offsets. Full high-rate comms restored 2 hours before LOI burn.",
+      "comments": [
+        {
+          "author": "glover-v",
+          "timestamp": "2026-05-12T02:00:00Z",
+          "text": "Ka-band dropping every few minutes. Signal strength bouncing between -75 and -95 dBm. Auto-track can't hold lock. We're 4 hours from LOI and I need this link."
+        },
+        {
+          "author": "gc-comm",
+          "timestamp": "2026-05-12T02:30:00Z",
+          "text": "We see the pointing oscillation in telemetry. Looks like thermal bias on the gimbal. Generating corrected offset table now. Use S-band for voice in the meantime. Can you do a manual point per KB-022 and report signal strength?"
+        },
+        {
+          "author": "glover-v",
+          "timestamp": "2026-05-12T03:00:00Z",
+          "text": "Manual point gives -72 dBm when I offset about 1.5 degrees from predicted TDRS position. Something is definitely shifted."
+        },
+        {
+          "author": "gc-comm",
+          "timestamp": "2026-05-12T04:15:00Z",
+          "text": "Uploading corrected offset table now. Apply via COMM panel B2 > KA-BAND > LOAD OFFSETS."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-004",
+      "title": "Solar array gimbal not tracking — port wing",
+      "description": "Port solar array gimbal stopped tracking sun at MET 48:00:00. Array fixed at 23 degree angle. Starboard wing nominal. Power output down approximately 35% from nominal. Currently managing on reduced power budget but this limits operations.",
+      "severity": "P1",
+      "status": "resolved",
+      "category": "power",
+      "reported_by": "koch-c",
+      "assigned_to": "gc-systems",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-09T12:00:00Z",
+      "updated_at": "2026-05-09T18:00:00Z",
+      "resolved_at": "2026-05-09T18:00:00Z",
+      "kb_articles_referenced": ["KB-004"],
+      "resolution": "Primary gimbal motor driver had latch-up due to single-event upset (radiation). Reset via backup driver per KB-004 step 2. After backup driver activation, gimbal resumed tracking. Primary driver recovered after power cycle and was restored as primary. Full power budget restored. Ground control to monitor for recurring SEUs.",
+      "comments": [
+        {
+          "author": "koch-c",
+          "timestamp": "2026-05-09T12:00:00Z",
+          "text": "Port array gimbal frozen at 23 deg. Motor current reads zero on primary driver. Following KB-004 diagnostic steps."
+        },
+        {
+          "author": "gc-systems",
+          "timestamp": "2026-05-09T12:30:00Z",
+          "text": "Telemetry confirms SEU signature on driver chip. Switch to backup driver and report."
+        },
+        {
+          "author": "koch-c",
+          "timestamp": "2026-05-09T13:00:00Z",
+          "text": "Backup driver active. Gimbal is tracking. Power output recovering."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-005",
+      "title": "Cabin temperature high — thermal radiator bypass stuck",
+      "description": "Cabin temperature climbing. Currently 82°F and rising. Thermal control system bypass valve not responding to commands. Crew uncomfortable. Equipment thermal limits at 95°F.",
+      "severity": "P2",
+      "status": "resolved",
+      "category": "thermal",
+      "reported_by": "hansen-j",
+      "assigned_to": "gc-systems",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-11T08:00:00Z",
+      "updated_at": "2026-05-11T10:30:00Z",
+      "resolved_at": "2026-05-11T10:30:00Z",
+      "kb_articles_referenced": ["KB-008"],
+      "resolution": "Bypass valve actuator had stuck solenoid. Ground control commanded a rapid power cycle sequence (off-5s-on, repeated 3x) which freed the solenoid. Bypass valve returned to commanded 15% position. Cabin temperature returned to 74°F within 45 minutes.",
+      "comments": [
+        {
+          "author": "hansen-j",
+          "timestamp": "2026-05-11T08:00:00Z",
+          "text": "Thermal panel T2 shows bypass at 78% when I'm commanding 15%. Valve not responding. Getting warm in here."
+        },
+        {
+          "author": "gc-systems",
+          "timestamp": "2026-05-11T08:30:00Z",
+          "text": "We see the bypass stuck at 78%. Going to try rapid power cycling the actuator. Stand by."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-006",
+      "title": "Star tracker calibration drift after eclipse exit",
+      "description": "After 52-minute eclipse, star tracker showing 0.12 degree residual. Above the 0.05 degree threshold per KB-007. Attitude solution degraded. Need recalibration before next maneuver.",
+      "severity": "P3",
+      "status": "resolved",
+      "category": "navigation",
+      "reported_by": "glover-v",
+      "assigned_to": "gc-gnc",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-13T04:00:00Z",
+      "updated_at": "2026-05-13T04:45:00Z",
+      "resolved_at": "2026-05-13T04:45:00Z",
+      "kb_articles_referenced": ["KB-007"],
+      "resolution": "Standard recalibration per KB-007 procedure. Required two attempts — first attempt in original attitude gave 0.08 deg residual. Vehicle rotated 45 degrees and second calibration converged to 0.02 degrees. Within spec.",
+      "comments": [
+        {
+          "author": "glover-v",
+          "timestamp": "2026-05-13T04:00:00Z",
+          "text": "Tracker 1 residual 0.12 deg post-eclipse. Going to free drift for recal per KB-007."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-007",
+      "title": "WCS backup bag system running low",
+      "description": "During AMSS-001 WCS pressure fault, crew used 8 of 40 backup WCS bags. Current inventory: 32 bags. At backup usage rate during the fault (4/day), we had only 8 days of backup supply. Request ground control assess resupply options or confirm primary WCS is reliable for remainder of mission.",
+      "severity": "P3",
+      "status": "closed",
+      "category": "life-support",
+      "reported_by": "wiseman-r",
+      "assigned_to": "gc-eclss",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-09T10:00:00Z",
+      "updated_at": "2026-05-09T14:00:00Z",
+      "resolved_at": "2026-05-09T14:00:00Z",
+      "kb_articles_referenced": ["KB-001"],
+      "resolution": "Primary WCS confirmed reliable after AMSS-001 fix. 32 bags remaining is sufficient contingency margin for rest of mission (18 days). No resupply needed. Bag count added to daily housekeeping checklist.",
+      "comments": [
+        {
+          "author": "wiseman-r",
+          "timestamp": "2026-05-09T10:00:00Z",
+          "text": "Housekeeping note. We burned through bags during the toilet situation. Want to make sure we're covered."
+        },
+        {
+          "author": "gc-eclss",
+          "timestamp": "2026-05-09T14:00:00Z",
+          "text": "32 bags for 18 remaining days is well above minimum (1 bag/day contingency = 18 needed). You're good. We'll track daily."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-008",
+      "title": "Stowage discrepancy — missing tool kit R2",
+      "description": "Repair tool kit R2 not in assigned location M2-B2. IMS shows it should be there. Kit contains ultrasonic leak detector and emergency patch materials. Need to locate before next EVA prep.",
+      "severity": "P3",
+      "status": "resolved",
+      "category": "operations",
+      "reported_by": "hansen-j",
+      "assigned_to": "gc-systems",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-10T16:00:00Z",
+      "updated_at": "2026-05-10T17:30:00Z",
+      "resolved_at": "2026-05-10T17:30:00Z",
+      "kb_articles_referenced": ["KB-017"],
+      "resolution": "Kit R2 was moved to M2-C1 during WCS repair (AMSS-001) and not re-stowed to original location. Hansen found it after systematic search. IMS updated with correct location. Reminder sent to crew about stowage discipline per KB-017.",
+      "comments": [
+        {
+          "author": "hansen-j",
+          "timestamp": "2026-05-10T16:00:00Z",
+          "text": "R2 is not where IMS says it is. Checking adjacent lockers."
+        },
+        {
+          "author": "hansen-j",
+          "timestamp": "2026-05-10T17:30:00Z",
+          "text": "Found it in M2-C1. Probably left there during the toilet repair. Updating IMS."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-009",
+      "title": "O2 generation system unexpected shutdown",
+      "description": "OGS shut down without warning at MET 120:30:00. AUTO restart failed. O2 levels currently nominal but will begin declining. Backup O2 tanks available but limited to 72hr supply.",
+      "severity": "P2",
+      "status": "resolved",
+      "category": "life-support",
+      "reported_by": "koch-c",
+      "assigned_to": "gc-eclss",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-13T06:30:00Z",
+      "updated_at": "2026-05-13T08:00:00Z",
+      "resolved_at": "2026-05-13T08:00:00Z",
+      "kb_articles_referenced": ["KB-015"],
+      "resolution": "OGS shutdown caused by water supply bubble (gas entrainment in feed line). Manual start per KB-015 procedure. Ground control had crew bleed feed line to clear bubble before restart. OGS back to steady state within 15 minutes. Backup O2 was not needed.",
+      "comments": [
+        {
+          "author": "koch-c",
+          "timestamp": "2026-05-13T06:30:00Z",
+          "text": "OGS just shut down. No warning. AUTO restart gives ERROR 7 on ECLSS panel A2. Attempting manual start per KB-015."
+        },
+        {
+          "author": "gc-eclss",
+          "timestamp": "2026-05-13T06:45:00Z",
+          "text": "ERROR 7 is water feed anomaly. Before manual start, bleed the feed line: open bleed valve A2-V-09 for 10 seconds to purge any gas bubble. Then proceed with manual start."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-010",
+      "title": "ARED resistance device — vacuum cylinder stiff",
+      "description": "ARED vacuum cylinder #2 is providing inconsistent resistance. Feels stiff at bottom of squat range, then releases suddenly. Makes squats and deadlifts unsafe. Other exercises unaffected.",
+      "severity": "P3",
+      "status": "in-progress",
+      "category": "medical",
+      "reported_by": "glover-v",
+      "assigned_to": "gc-surgeon",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-11T14:00:00Z",
+      "updated_at": "2026-05-12T09:00:00Z",
+      "resolved_at": null,
+      "kb_articles_referenced": ["KB-006"],
+      "resolution": null,
+      "comments": [
+        {
+          "author": "glover-v",
+          "timestamp": "2026-05-11T14:00:00Z",
+          "text": "Cylinder 2 is binding. Can still do upper body work but squats are a no-go. Don't want to risk injury."
+        },
+        {
+          "author": "gc-surgeon",
+          "timestamp": "2026-05-11T16:00:00Z",
+          "text": "Understood. Switch to single-cylinder exercises for legs until we can troubleshoot. Reducing load is better than no exercise."
+        },
+        {
+          "author": "gc-systems",
+          "timestamp": "2026-05-12T09:00:00Z",
+          "text": "Working with vendor on troubleshooting guide. May need crew to lubricate the cylinder guide rod. Procedure incoming."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-011",
+      "title": "Water quality test — elevated turbidity",
+      "description": "Routine water test showing turbidity at 1.3 NTU, above the 1.0 threshold. pH and chlorine are nominal. No taste or odor issues. Switched to tank B per KB-009.",
+      "severity": "P3",
+      "status": "resolved",
+      "category": "life-support",
+      "reported_by": "hansen-j",
+      "assigned_to": "gc-eclss",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-12T08:00:00Z",
+      "updated_at": "2026-05-12T14:00:00Z",
+      "resolved_at": "2026-05-12T14:00:00Z",
+      "kb_articles_referenced": ["KB-009"],
+      "resolution": "Chlorine tablet added to primary tank per KB-009. After 2-hour wait, retest showed turbidity at 0.6 NTU — well within spec. Root cause likely biofilm fragment from tank wall. Primary tank returned to service. Water quality nominal.",
+      "comments": [
+        {
+          "author": "hansen-j",
+          "timestamp": "2026-05-12T08:00:00Z",
+          "text": "Turbidity 1.3 NTU on routine test. Everything else looks fine. Switching to tank B and treating tank A per KB-009."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-012",
+      "title": "Crew request — updated meal rotation schedule",
+      "description": "Day 8 of 10-day meal cycle. Several crew members would prefer to swap some meals. Koch requests trading her Day 9 beef stew for Glover's Day 9 shrimp cocktail. Also requesting ground control send up a revised 10-day cycle for the return leg that accounts for crew preferences logged over first 10 days.",
+      "severity": "P4",
+      "status": "closed",
+      "category": "operations",
+      "reported_by": "koch-c",
+      "assigned_to": "gc-surgeon",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-10T18:00:00Z",
+      "updated_at": "2026-05-11T10:00:00Z",
+      "resolved_at": "2026-05-11T10:00:00Z",
+      "kb_articles_referenced": ["KB-012"],
+      "resolution": "Meal swap approved per KB-012 mutual consent policy. Revised 10-day cycle for return leg uploaded accounting for crew preferences. Nutritional balance maintained per Flight Surgeon review.",
+      "comments": [
+        {
+          "author": "koch-c",
+          "timestamp": "2026-05-10T18:00:00Z",
+          "text": "The beef stew is fine but the shrimp cocktail is better. Glover says he's willing to trade. Also, can we get an updated menu for the trip home?"
+        },
+        {
+          "author": "gc-surgeon",
+          "timestamp": "2026-05-11T10:00:00Z",
+          "text": "Swap approved. New rotation uploaded. We kept calorie and macro balance within limits. Enjoy the shrimp."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-013",
+      "title": "EVA suit comm intermittent static",
+      "description": "During EVA-2 prep, suit 3 (Koch) showing intermittent static on EVA frequency. Voice is intelligible but static bursts every 30-60 seconds. Suit 1 (Hansen) nominal. EVA is in 4 hours.",
+      "severity": "P2",
+      "status": "resolved",
+      "category": "eva",
+      "reported_by": "koch-c",
+      "assigned_to": "gc-eva",
+      "mission": "artemis-iii",
+      "created_at": "2026-08-15T06:00:00Z",
+      "updated_at": "2026-08-15T08:30:00Z",
+      "resolved_at": "2026-08-15T08:30:00Z",
+      "kb_articles_referenced": ["KB-005"],
+      "resolution": "Loose connector on suit 3 comm antenna cable. Crew reseated connector and applied strain relief clip. Static eliminated. Full comm check passed. EVA proceeded on schedule.",
+      "comments": [
+        {
+          "author": "koch-c",
+          "timestamp": "2026-08-15T06:00:00Z",
+          "text": "Static bursts on suit 3 comms. Happens on both frequencies. Not a showstopper yet but I don't want to go outside with questionable comms."
+        },
+        {
+          "author": "gc-eva",
+          "timestamp": "2026-08-15T07:00:00Z",
+          "text": "Check the antenna cable connector at the helmet ring junction. Thermal cycling can loosen it. Reseat and apply the blue strain relief clip from suit maintenance kit."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-014",
+      "title": "Navigation display showing incorrect ground track",
+      "description": "Main flight display showing ground track approximately 50km offset from predicted trajectory. Star tracker and IMU data appear nominal. Suspect display rendering issue rather than actual navigation error.",
+      "severity": "P3",
+      "status": "open",
+      "category": "navigation",
+      "reported_by": "glover-v",
+      "assigned_to": "gc-gnc",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-14T10:00:00Z",
+      "updated_at": "2026-05-14T10:00:00Z",
+      "resolved_at": null,
+      "kb_articles_referenced": [],
+      "resolution": null,
+      "comments": [
+        {
+          "author": "glover-v",
+          "timestamp": "2026-05-14T10:00:00Z",
+          "text": "Display ground track doesn't match what I'm seeing out the window. We should be over the coast of Africa but display shows us over the Atlantic. Nav state itself looks clean — I think it's a rendering bug."
+        }
+      ]
+    },
+    {
+      "id": "AMSS-015",
+      "title": "PAO photo request — Earth from lunar distance",
+      "description": "NASA Public Affairs requesting crew photograph of Earth from maximum lunar distance for upcoming anniversary media event. Need high-res Nikon shots through window 3 (best optical path). Not time-critical but requested within next 48 hours.",
+      "severity": "P4",
+      "status": "closed",
+      "category": "operations",
+      "reported_by": "gc-capcom",
+      "assigned_to": "wiseman-r",
+      "mission": "artemis-ii",
+      "created_at": "2026-05-12T20:00:00Z",
+      "updated_at": "2026-05-13T15:00:00Z",
+      "resolved_at": "2026-05-13T15:00:00Z",
+      "kb_articles_referenced": ["KB-028"],
+      "resolution": "Commander Wiseman captured 47 images through window 3 using Nikon Z9 at various exposures and focal lengths. Best images selected and downlinked via Ka-band during scheduled data dump. PAO confirmed receipt and quality. Images cleared for public release.",
+      "comments": [
+        {
+          "author": "gc-capcom",
+          "timestamp": "2026-05-12T20:00:00Z",
+          "text": "PAO would love some Earth shots when you have a free moment. Window 3, Nikon, highest res. No rush — sometime in the next 2 days."
+        },
+        {
+          "author": "wiseman-r",
+          "timestamp": "2026-05-13T14:30:00Z",
+          "text": "Got some great shots during the quiet period. Earth looks incredible from out here. 47 frames downlinking now."
+        }
+      ]
+    }
+  ]
+}

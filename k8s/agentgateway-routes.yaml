@@ -1,0 +1,84 @@
+# agentgateway-routes.yaml
+#
+# Attaches the AMSS services to the Solo Enterprise agentgateway.
+# Gateway: amss-gateway in agentgateway-system (address: 192.168.139.2, port: 80)
+#
+# Routing:
+#   http://192.168.139.2/api/v1/* → bff service port 8080  (higher priority — longer prefix)
+#   http://192.168.139.2/*        → frontend service port 80 (catch-all)
+#
+# Apply:
+#   kubectl apply -f k8s/agentgateway-routes.yaml
+#
+# Verify:
+#   curl http://192.168.139.2/health           # BFF health via gateway
+#   curl http://192.168.139.2/api/v1/crew      # crew store via BFF via gateway
+#   curl http://192.168.139.2/                 # frontend index.html via gateway
+
+---
+# ReferenceGrant — allows the Gateway in agentgateway-system to reference
+# Services in the amss namespace when the agentgateway controller programs
+# backend routes.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: agentgateway-to-amss
+  namespace: amss
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+
+---
+# BFF API route — /api/v1/* → bff:8080
+# Higher priority than the frontend catch-all because /api/v1 is a longer prefix.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bff-api-route
+  namespace: amss
+  labels:
+    app.kubernetes.io/part-of: amss
+spec:
+  parentRefs:
+  - name: amss-gateway
+    namespace: agentgateway-system
+    group: gateway.networking.k8s.io
+    kind: Gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1
+    backendRefs:
+    - name: bff
+      port: 8080
+
+---
+# Frontend route — /* catch-all → frontend:80
+# Lower priority than the BFF route; handles all non-API traffic.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: frontend-route
+  namespace: amss
+  labels:
+    app.kubernetes.io/part-of: amss
+spec:
+  parentRefs:
+  - name: amss-gateway
+    namespace: agentgateway-system
+    group: gateway.networking.k8s.io
+    kind: Gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: frontend
+      port: 80
