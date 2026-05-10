@@ -1,0 +1,4 @@
+cluster: orbstack
+products:
+  agentgateway:
+    enabled: true

@@ -80,10 +80,10 @@
           "title": "S-band signal dropouts on primary DSN link",
           "description": "Pilot Glover reporting intermittent S-band dropouts during translunar transit. Signal loss lasting 2–8 seconds at ~40-minute intervals. Backup antenna not yet activated. Correlation with spacecraft attitude maneuvers under investigation.",
           "severity": "P2",
-          "status": "open",
+          "category": "comms",
+          "reported_by": "glover-v",
           "mission": "artemis-ii",
-          "assignee": "gc-comm",
-          "tags": ["comms", "s-band", "dsn", "antenna"]
+          "assigned_to": "gc-comm"
         },
         "description": "Glover opens P2 comms ticket",
         "crew_id": "glover-v",
@@ -151,10 +151,10 @@
           "title": "xEMU Suit 2 right shoulder bearing — elevated torque pre-EVA",
           "description": "Mission Specialist Hansen reporting elevated torque on xEMU Suit 2 right shoulder bearing during pre-EVA donning checks. Torque reading: 12.4 N·m vs nominal 8.0–9.5 N·m. EVA planned for tomorrow. EVA Officer review requested before go/no-go decision.",
           "severity": "P2",
-          "status": "open",
+          "category": "eva",
+          "reported_by": "hansen-j",
           "mission": "artemis-ii",
-          "assignee": "gc-eva",
-          "tags": ["eva", "xemu", "suit", "bearing", "pre-eva-check"]
+          "assigned_to": "gc-eva"
         },
         "description": "Hansen opens P2 EVA suit ticket",
         "crew_id": "hansen-j",
@@ -282,10 +282,10 @@
           "title": "Water recovery system pressure drop — Cabin B",
           "description": "Automated alert: WCS water recovery loop pressure in Cabin B dropped 8% below nominal during sleep period. Crew unaware. System auto-compensated but root cause unknown. Ground systems team investigating telemetry.",
           "severity": "P2",
-          "status": "open",
+          "category": "life-support",
+          "reported_by": "gc-systems",
           "mission": "artemis-ii",
-          "assignee": "gc-systems",
-          "tags": ["wcs", "water", "pressure", "life-support", "automated-alert"]
+          "assigned_to": "gc-systems"
         },
         "description": "Ground Control opens automated WCS pressure alert ticket",
         "crew_id": "gc-systems",
