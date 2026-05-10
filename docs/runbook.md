@@ -523,78 +523,204 @@ Traffic flows through the agentgateway and is visible in the Solo Enterprise UI 
 
 ---
 
-## Phase 4 — Solo Enterprise for kagent (Pending License Key)
+## Phase 4 — Solo Enterprise for kagent
 
-Install kagent Enterprise to replace the BFF stub mode with live AI agents backed by real LLM calls routed through agentgateway egress.
+Install kagent Enterprise to replace the BFF stub mode with live AI agents backed by real LLM calls.
 
-### 4.1 Install kagent Enterprise
+### 4.1 Set Environment Variables
 
-Follow: https://docs.solo.io/kagent-enterprise/docs/latest/quickstart/
+```bash
+export KAGENT_ENT_VERSION=0.3.19
+export MGMT_CONTEXT=$(kubectl config current-context)
+export ANTHROPIC_API_KEY=<your-key>
+export AGENTGATEWAY_LICENSE_KEY=<your-key>
+```
 
-Key steps:
-1. Install Solo distribution of Istio in ambient mode
-2. Install Solo Enterprise for kagent via Helm (includes ambient mesh enrollment)
-3. Configure Anthropic as the LLM provider in the model config
-4. Verify all kagent pods running:
+### 4.2 Install kagent Enterprise CRDs
+
+```bash
+helm upgrade -i kagent-crds \
+  oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise-crds \
+  --kube-context ${MGMT_CONTEXT} \
+  -n kagent --create-namespace \
+  --version ${KAGENT_ENT_VERSION}
+```
+
+### 4.3 Install Management Chart in kagent Namespace
+
+The management chart must be in the `kagent` namespace — the kagent controller expects `solo-enterprise-ui` in its own namespace for OIDC. If you previously installed it in `agentgateway-system`, uninstall it first (the CRDs are cluster-scoped and conflict if installed twice):
+
+```bash
+# Only if previously installed in agentgateway-system:
+helm uninstall management -n agentgateway-system
+
+helm upgrade -i kagent-mgmt \
+  oci://us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts/management \
+  --namespace kagent \
+  --version 0.3.19 \
+  --set cluster="mgmt-cluster" \
+  --set products.kagent.enabled=true \
+  --set products.agentgateway.enabled=true \
+  --set-string licensing.licenseKey=${AGENTGATEWAY_LICENSE_KEY}
+```
+
+Access the UI:
+```bash
+kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
+open http://localhost:4000
+```
+
+### 4.4 Create JWT Secret
+
+Required before installing the kagent chart:
+
+```bash
+openssl genrsa -out /tmp/key.pem 2048
+kubectl create secret generic jwt \
+  -n kagent \
+  --from-file=jwt=/tmp/key.pem \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+### 4.5 Install kagent with Anthropic Provider
+
+Create the values file:
+
+```bash
+cat << EOF > kagent.yaml
+licensing:
+  licenseKey: ${AGENTGATEWAY_LICENSE_KEY}
+providers:
+  default: anthropic
+  anthropic:
+    apiKey: ${ANTHROPIC_API_KEY}
+otel:
+  tracing:
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: solo-enterprise-telemetry-collector.kagent.svc.cluster.local:4317
+        insecure: true
+EOF
+```
+
+Install:
+
+```bash
+helm upgrade -i kagent \
+  oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise \
+  -n kagent \
+  --version ${KAGENT_ENT_VERSION} \
+  --values kagent.yaml
+```
+
+Verify all pods running:
 
 ```bash
 kubectl get pods -n kagent
 ```
 
-### 4.2 Register MCP Servers with kmcp
+Expected pods: `kagent-controller`, `kagent-postgresql`, `kmcp-enterprise-controller-manager`, `kagent-mgmt-clickhouse`, `solo-enterprise-telemetry-collector`, `solo-enterprise-ui`.
 
-Deploy the MCP servers as `MCPServer` CRDs managed by the kmcp controller:
+### 4.6 Create ModelConfig
 
-```bash
-cd mcp-servers/kb-mcp
-kmcp deploy
-
-cd ../ticket-mcp
-kmcp deploy
-```
-
-Verify:
-```bash
-kubectl get mcpservers -n amss
-```
-
-### 4.3 Apply Agent CRDs
+The `provider` field is case-sensitive — must be `Anthropic` not `anthropic`:
 
 ```bash
-kubectl apply -f agents/mission-support-agent/agent.yaml -n amss
-kubectl apply -f agents/kb-curator-agent/agent.yaml -n amss
+kubectl apply -f - <<EOF
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: kagent
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-6
+EOF
 ```
 
-Verify agents reach Ready state:
-```bash
-kubectl get agents -n amss
-```
+### 4.7 Register MCP Servers as RemoteMCPServer CRDs
 
-### 4.4 Configure agentgateway Egress for LLM Traffic
-
-Configure guardrails, model failover, and content-based routing for agent → LLM traffic through agentgateway egress. Follow: https://docs.solo.io/agentgateway/2.3.x/
-
-### 4.5 Flip BFF Out of Stub Mode
-
-Once agents are deployed and reachable:
-```bash
-kubectl set env deployment/bff STUB_MODE=false -n amss
-kubectl rollout status deployment/bff -n amss
-```
-
-### 4.6 Verify Live Agent Responses
+The `allowedNamespaces.from: All` field is required because agents live in the `kagent` namespace but the MCP servers are in `amss`:
 
 ```bash
-GATEWAY_IP=$(kubectl get gateway amss-gateway -n agentgateway-system \
-  -o jsonpath='{.status.addresses[0].value}')
+kubectl apply -f - <<EOF
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: kb-mcp
+  namespace: amss
+spec:
+  description: "Knowledge Base MCP server"
+  url: http://kb-mcp.amss.svc.cluster.local:9001
+  protocol: STREAMABLE_HTTP
+  allowedNamespaces:
+    from: All
+EOF
 
-curl -s -X POST http://${GATEWAY_IP}/api/v1/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"crew_id":"wiseman-r","session_id":"demo-1","mission":"artemis-ii","message":"What is the WCS flush procedure?"}' \
-  | jq '.data.response'
+kubectl apply -f - <<EOF
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: ticket-mcp
+  namespace: amss
+spec:
+  description: "Ticket MCP server"
+  url: http://ticket-mcp.amss.svc.cluster.local:9002
+  protocol: STREAMABLE_HTTP
+  allowedNamespaces:
+    from: All
+EOF
 ```
 
-Response now comes from the mission-support-agent via real LLM call, routed through agentgateway. Observe the call in the Solo Enterprise UI.
+### 4.8 Deploy Agents
+
+Agents live in the `kagent` namespace so they share the namespace with `default-model-config`. The agent YAMLs already have `namespace: kagent` and explicit `modelConfig: default-model-config`:
+
+```bash
+kubectl apply -f agents/mission-support-agent/agent.yaml
+kubectl apply -f agents/kb-curator-agent/agent.yaml
+```
+
+Verify both agents reach Ready:
+
+```bash
+kubectl get agents -n kagent
+```
+
+Expected: both show `READY: True` and `ACCEPTED: True`.
+
+### 4.9 Test Agent via A2A
+
+```bash
+kubectl port-forward svc/kagent-controller -n kagent 8083:8083 &
+
+# Check agent card
+curl -s http://localhost:8083/api/a2a/kagent/mission-support-agent/.well-known/agent.json | jq .
+
+# Invoke the agent (trailing slash on URL is required; use "kind" not "type" in message parts)
+curl --max-time 120 -X POST http://localhost:8083/api/a2a/kagent/mission-support-agent/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "message/send",
+    "id": "test-1",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{"kind": "text", "text": "What is the WCS flush procedure?"}]
+      }
+    }
+  }'
+```
+
+Expected: agent runs `search_kb`, reads KB-001, returns a formatted procedure response with panel locations and valve IDs. Full chain confirmed: user → kagent A2A → Claude Sonnet 4.6 → MCP tools → KB Store → response.
+
+### 4.10 Remaining Steps (TODO)
+
+- Wire BFF to kagent A2A endpoint, set `STUB_MODE=false`
+- Configure agentgateway egress for LLM traffic (guardrails, model failover)
+- End-to-end test from frontend through agentgateway to live agents
 
 ---
 
@@ -614,12 +740,12 @@ Uninstall in reverse order:
 
 ```bash
 # kagent (Phase 4)
-helm uninstall kagent-enterprise -n kagent
+helm uninstall kagent -n kagent
+helm uninstall kagent-crds -n kagent
+helm uninstall kagent-mgmt -n kagent
+kubectl delete namespace kagent
 
-# Management UI
-helm uninstall management -n agentgateway-system
-
-# agentgateway
+# agentgateway (Phase 3)
 helm uninstall enterprise-agentgateway -n agentgateway-system
 helm uninstall enterprise-agentgateway-crds -n agentgateway-system
 kubectl delete namespace agentgateway-system
@@ -707,6 +833,28 @@ kmcp install
 kubectl get crd mcpservers.kagent.dev
 ```
 
+### kagent controller CrashLoopBackOff — "solo-enterprise-ui not found"
+
+The management chart must be installed in the `kagent` namespace, not `agentgateway-system`. The kagent controller looks for `solo-enterprise-ui` in its own namespace for OIDC. Fix: uninstall from `agentgateway-system` and reinstall in `kagent` (see section 4.3).
+
+### "cross-namespace reference not allowed" on RemoteMCPServer
+
+Agents in the `kagent` namespace cannot reference MCP servers in `amss` without explicit permission. Add `allowedNamespaces.from: All` to each `RemoteMCPServer` spec and re-apply.
+
+### "ModelConfig not found" or agent stuck with empty model
+
+The kagent controller does not apply a default `modelConfig` automatically. The agent YAML must include an explicit `modelConfig: default-model-config` under `spec.declarative`. If you removed it assuming it was a default, add it back and re-apply.
+
+### Model 404 error from LLM provider
+
+Check the `model` string in the `ModelConfig` exactly matches what the provider accepts (`claude-sonnet-4-6`, not `claude-sonnet-4-20250514` or similar aliases). Delete and re-apply the `ModelConfig`, then delete and re-apply the agents to pick up the change.
+
+### A2A returns empty response or 307 redirect
+
+Two common causes:
+- **Missing trailing slash**: the A2A URL must end with `/` — `http://localhost:8083/api/a2a/kagent/mission-support-agent/` not without the slash
+- **Wrong message part key**: use `"kind": "text"` not `"type": "text"` in the message parts array
+
 ---
 
 ## Version History
@@ -716,4 +864,4 @@ kubectl get crd mcpservers.kagent.dev
 | 2026-05-09 | Phase 1 | Initial build. Three stores (225 tests), two MCP servers (106 tests, `kmcp init go --no-git`), BFF with stub mode (103 tests, 12 keyword patterns), React frontend, activity generator v1 (17 tests). |
 | 2026-05-09 | Phase 2 | k8s manifests for all 7 services. `deploy.sh` + `teardown.sh`. Frontend behind NodePort 30081, BFF at NodePort 30080. Activity generator v2 rewrite: humanized 22-minute cycles, 6 narrative scenarios, concurrent goroutines, graceful SIGINT shutdown, `stash_as` carry mechanism for ticket IDs, context cancellation throughout. 451 → 480 total tests. |
 | 2026-05-09 | Phase 3 | Solo Enterprise agentgateway installed. Gateway at `192.168.139.2`. HTTPRoutes: `/api/v1/*` → BFF, `/*` → frontend. ReferenceGrant for cross-namespace access. Solo Enterprise UI at localhost:4000 via port-forward. Frontend `VITE_API_URL` removed from build — SPA uses relative paths that work through the gateway. Fixed `crypto.randomUUID` fallback for plain-HTTP contexts. Fixed activity generator ticket create field names (`category`, `reported_by`, `assigned_to`). |
-| — | Phase 4 | Pending: kagent Enterprise, Agent CRDs, agentgateway LLM egress, STUB_MODE=false. |
+| 2026-05-10 | Phase 4 | kagent Enterprise installed in `kagent` namespace with Anthropic provider (claude-sonnet-4-6). ModelConfig, RemoteMCPServer CRDs, and Agent CRDs applied. Both agents (mission-support-agent, kb-curator-agent) show READY: True. Full A2A chain verified: user → kagent → Claude Sonnet 4.6 → MCP tools → KB Store. Management chart moved from `agentgateway-system` to `kagent` namespace. Key gotchas: management chart namespace, `allowedNamespaces.from: All` on RemoteMCPServer, explicit `modelConfig` in agent YAML, trailing slash on A2A URL, `"kind"` not `"type"` in message parts. Remaining: BFF wiring, agentgateway LLM egress, frontend end-to-end. |
