@@ -2,17 +2,19 @@
 #
 # Prerequisites:
 #   - Solo Enterprise for kagent installed in the cluster
-#   - A ModelConfig named "default-model-config" exists in namespace amss
-#   - MCPServer resources "kb-mcp" and "ticket-mcp" are deployed in namespace amss
+#   - A ModelConfig named "default-model-config" exists in namespace kagent
+#     (ModelConfig must be in the same namespace as the Agent; default-model-config is
+#     created by the kagent Enterprise install and lives in the kagent namespace)
+#   - RemoteMCPServer resources "kb-mcp" and "ticket-mcp" are deployed in namespace amss
 #
 # Deploy:
-#   kubectl apply -f agent.yaml -n amss
+#   kubectl apply -f agents/mission-support-agent/agent.yaml -n kagent
 #
 apiVersion: kagent.dev/v1alpha2
 kind: Agent
 metadata:
   name: mission-support-agent
-  namespace: amss
+  namespace: kagent
 spec:
   description: >-
     Artemis Mission Support Agent — answers crew questions by searching the knowledge
@@ -74,7 +76,8 @@ spec:
     - type: McpServer
       mcpServer:
         name: kb-mcp
-        kind: MCPServer
+        kind: RemoteMCPServer
+        namespace: amss
         toolNames:
         - search_kb
         - read_kb_article
@@ -82,7 +85,8 @@ spec:
     - type: McpServer
       mcpServer:
         name: ticket-mcp
-        kind: MCPServer
+        kind: RemoteMCPServer
+        namespace: amss
         toolNames:
         - search_tickets
         - read_ticket
