@@ -1,87 +1,339 @@
 [
   {
-    "name": "Create P3 ticket — thruster calibration anomaly",
+    "name": "Morning systems check — Koch",
+    "start_offset_seconds": 0,
     "steps": [
       {
         "method": "POST",
-        "path": "/tickets",
+        "path": "/api/v1/chat",
         "body": {
-          "title": "Thruster 4 calibration drift detected",
-          "description": "Automated telemetry shows thruster 4 specific impulse reading 2.3% below nominal. Delta-V budget impact is within margin but trending. Requesting engineering review.",
-          "severity": "P3",
-          "status": "open",
-          "mission": "artemis-iv",
-          "assignee": "crew-tanaka",
-          "tags": ["propulsion", "thruster", "calibration"]
+          "crew_id": "koch-c",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "What's the current status of Orion ECLSS? I'm seeing a slightly elevated CO2 reading on Panel 3."
         },
-        "description": "open a new P3 propulsion ticket"
+        "description": "Koch checks ECLSS status",
+        "crew_id": "koch-c",
+        "pre_delay_min": 5,
+        "pre_delay_max": 10,
+        "post_delay_min": 8,
+        "post_delay_max": 20
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "koch-c",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "Understood. What's the procedure if CO2 partial pressure reaches the scrubber alert threshold?"
+        },
+        "description": "Koch asks for CO2 alert procedure",
+        "crew_id": "koch-c",
+        "pre_delay_min": 10,
+        "pre_delay_max": 25,
+        "post_delay_min": 5,
+        "post_delay_max": 15
       }
     ]
   },
   {
-    "name": "Create and close P4 ticket — routine comms window log",
+    "name": "Comms glitch investigation — Glover",
+    "start_offset_seconds": 180,
     "steps": [
       {
         "method": "POST",
-        "path": "/tickets",
+        "path": "/api/v1/chat",
         "body": {
-          "title": "Scheduled DSN contact — 34m window completed",
-          "description": "Routine Deep Space Network contact window completed. All telemetry nominal. No action items.",
-          "severity": "P4",
-          "status": "open",
+          "crew_id": "glover-v",
+          "session_id": "{{prev.session_id}}",
           "mission": "artemis-ii",
-          "assignee": "crew-osei",
-          "tags": ["comms", "dsn", "routine"]
+          "message": "Getting intermittent dropouts on the S-band link. What does the KB say about DSN signal loss during translunar transit?"
         },
-        "description": "log the completed DSN window as a P4 ticket"
+        "description": "Glover queries S-band dropout issue",
+        "crew_id": "glover-v",
+        "pre_delay_min": 5,
+        "pre_delay_max": 12,
+        "post_delay_min": 10,
+        "post_delay_max": 25
       },
       {
-        "method": "PATCH",
-        "path": "/tickets/{{prev.id}}",
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "glover-v",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "Copy. Is there a checklist for switchover to the backup high-gain antenna?"
+        },
+        "description": "Glover asks about backup antenna switchover",
+        "crew_id": "glover-v",
+        "pre_delay_min": 8,
+        "pre_delay_max": 20,
+        "post_delay_min": 5,
+        "post_delay_max": 12
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/tickets",
+        "body": {
+          "title": "S-band signal dropouts on primary DSN link",
+          "description": "Pilot Glover reporting intermittent S-band dropouts during translunar transit. Signal loss lasting 2–8 seconds at ~40-minute intervals. Backup antenna not yet activated. Correlation with spacecraft attitude maneuvers under investigation.",
+          "severity": "P2",
+          "status": "open",
+          "mission": "artemis-ii",
+          "assignee": "gc-comm",
+          "tags": ["comms", "s-band", "dsn", "antenna"]
+        },
+        "description": "Glover opens P2 comms ticket",
+        "crew_id": "glover-v",
+        "pre_delay_min": 5,
+        "pre_delay_max": 10,
+        "post_delay_min": 3,
+        "post_delay_max": 8
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/tickets/{{prev.id}}/comments",
+        "body": {
+          "author": "gc-comm",
+          "text": "COMM monitoring. Initial assessment: dropout pattern correlates with Orion high-gain antenna gimbal limit at current trajectory. Recommend switching to medium-gain antenna for next 6-hour window. DSN Madrid contact in 45 min — will request extended support."
+        },
+        "description": "Ground Control COMM adds initial assessment",
+        "crew_id": "gc-comm",
+        "pre_delay_min": 15,
+        "pre_delay_max": 40,
+        "post_delay_min": 5,
+        "post_delay_max": 10
+      }
+    ]
+  },
+  {
+    "name": "EVA suit prep concern — Hansen",
+    "start_offset_seconds": 420,
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "hansen-j",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "During today's suit donning checks the xEMU right shoulder bearing is showing higher-than-nominal torque. Can you pull the maintenance history for xEMU suit 2?"
+        },
+        "description": "Hansen queries xEMU shoulder bearing anomaly",
+        "crew_id": "hansen-j",
+        "pre_delay_min": 5,
+        "pre_delay_max": 12,
+        "post_delay_min": 10,
+        "post_delay_max": 30
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "hansen-j",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "What's the go/no-go criteria for EVA with elevated bearing torque? Is there a threshold in the EVA procedures?"
+        },
+        "description": "Hansen asks for EVA go/no-go criteria",
+        "crew_id": "hansen-j",
+        "pre_delay_min": 12,
+        "pre_delay_max": 30,
+        "post_delay_min": 5,
+        "post_delay_max": 15
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/tickets",
+        "body": {
+          "title": "xEMU Suit 2 right shoulder bearing — elevated torque pre-EVA",
+          "description": "Mission Specialist Hansen reporting elevated torque on xEMU Suit 2 right shoulder bearing during pre-EVA donning checks. Torque reading: 12.4 N·m vs nominal 8.0–9.5 N·m. EVA planned for tomorrow. EVA Officer review requested before go/no-go decision.",
+          "severity": "P2",
+          "status": "open",
+          "mission": "artemis-ii",
+          "assignee": "gc-eva",
+          "tags": ["eva", "xemu", "suit", "bearing", "pre-eva-check"]
+        },
+        "description": "Hansen opens P2 EVA suit ticket",
+        "crew_id": "hansen-j",
+        "pre_delay_min": 5,
+        "pre_delay_max": 10,
+        "post_delay_min": 3,
+        "post_delay_max": 8
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/tickets/{{prev.id}}/comments",
+        "body": {
+          "author": "gc-eva",
+          "text": "EVA Officer reviewing. Torque at 12.4 N·m exceeds the 10.0 N·m yellow threshold — this is a no-go for EVA per xEMU ICD section 4.7.2. Recommending 24-hour hold and suit inspection protocol S-7. Will coordinate with suit engineers at JSC. Do not pressurize suit until cleared."
+        },
+        "description": "EVA Officer issues no-go and inspection order",
+        "crew_id": "gc-eva",
+        "pre_delay_min": 20,
+        "pre_delay_max": 60,
+        "post_delay_min": 5,
+        "post_delay_max": 10
+      }
+    ]
+  },
+  {
+    "name": "KB article update — Ground Control ECLSS",
+    "start_offset_seconds": 660,
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/api/v1/kb",
+        "body": {
+          "title": "CO2 Scrubber Cartridge Replacement — In-Flight Procedure",
+          "category": "life-support",
+          "body": "## Purpose\nReplace the CDRA (Carbon Dioxide Removal Assembly) sorbent cartridge during translunar or lunar surface operations.\n\n## Prerequisites\n- Replacement cartridge stowed in locker LB-12\n- CO2 partial pressure > 5.3 mmHg or scrubber cycle count > 72 hours\n- CAPCOM and ECLSS officer notified\n\n## Steps\n1. Don gloves. Cartridge contains desiccant — avoid contact with eyes.\n2. Power down CDRA via panel switch ECLSS-7.\n3. Wait 3 minutes for depressurization of sorbent bed.\n4. Remove locking ring (quarter-turn counterclockwise) and extract spent cartridge.\n5. Insert new cartridge, seat fully, re-engage locking ring.\n6. Power CDRA back on; verify green status light within 30 seconds.\n7. Log replacement time and cartridge serial number in IFS.\n\n## Caution\nDo not operate cabin without active CDRA for more than 20 minutes. If CDRA fails to start, switch to LiOH backup canisters per contingency procedure LS-C4.\n\n## References\n- ECLSS Operations Handbook, Rev 7, Section 3.2\n- LiOH Contingency Procedure LS-C4",
+          "tags": ["life-support", "co2", "cdra", "scrubber", "in-flight", "procedure"]
+        },
+        "description": "ECLSS officer publishes CO2 scrubber replacement procedure",
+        "crew_id": "gc-eclss",
+        "pre_delay_min": 10,
+        "pre_delay_max": 20,
+        "post_delay_min": 5,
+        "post_delay_max": 10
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "gc-capcom",
+          "session_id": "{{prev.session_id}}",
+          "mission": "all",
+          "message": "ECLSS just published an updated CO2 scrubber cartridge replacement procedure. Can you confirm this is now indexed in the KB and accessible to the crew?"
+        },
+        "description": "CAPCOM verifies new KB article is accessible",
+        "crew_id": "gc-capcom",
+        "pre_delay_min": 5,
+        "pre_delay_max": 15,
+        "post_delay_min": 5,
+        "post_delay_max": 10
+      }
+    ]
+  },
+  {
+    "name": "Checking on old issues — Wiseman",
+    "start_offset_seconds": 900,
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "wiseman-r",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "What's the current status of the WCS pressure fault that was logged earlier in the mission?"
+        },
+        "description": "Wiseman checks status of WCS ticket",
+        "crew_id": "wiseman-r",
+        "pre_delay_min": 5,
+        "pre_delay_max": 12,
+        "post_delay_min": 10,
+        "post_delay_max": 25
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "wiseman-r",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "Good. Are there any open P1 or P2 tickets assigned to Artemis II that need my attention as commander?"
+        },
+        "description": "Wiseman reviews open priority tickets for Artemis II",
+        "crew_id": "wiseman-r",
+        "pre_delay_min": 10,
+        "pre_delay_max": 25,
+        "post_delay_min": 8,
+        "post_delay_max": 20
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/chat",
+        "body": {
+          "crew_id": "wiseman-r",
+          "session_id": "{{prev.session_id}}",
+          "mission": "artemis-ii",
+          "message": "Acknowledged. I'll follow up with Glover on the comms issue. Is there anything in the KB about managing crew workload during anomaly response?"
+        },
+        "description": "Wiseman asks about crew workload management during anomalies",
+        "crew_id": "wiseman-r",
+        "pre_delay_min": 12,
+        "pre_delay_max": 30,
+        "post_delay_min": 5,
+        "post_delay_max": 15
+      }
+    ]
+  },
+  {
+    "name": "Ticket resolution — Ground Control",
+    "start_offset_seconds": 1080,
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/api/v1/tickets",
+        "body": {
+          "title": "Water recovery system pressure drop — Cabin B",
+          "description": "Automated alert: WCS water recovery loop pressure in Cabin B dropped 8% below nominal during sleep period. Crew unaware. System auto-compensated but root cause unknown. Ground systems team investigating telemetry.",
+          "severity": "P2",
+          "status": "open",
+          "mission": "artemis-ii",
+          "assignee": "gc-systems",
+          "tags": ["wcs", "water", "pressure", "life-support", "automated-alert"]
+        },
+        "description": "Ground Control opens automated WCS pressure alert ticket",
+        "crew_id": "gc-systems",
+        "stash_as": "ticket_id",
+        "pre_delay_min": 3,
+        "pre_delay_max": 8,
+        "post_delay_min": 3,
+        "post_delay_max": 8
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/tickets/{{prev.ticket_id}}",
+        "body": {
+          "status": "in-progress"
+        },
+        "description": "Systems engineer takes ticket in-progress",
+        "crew_id": "gc-systems",
+        "pre_delay_min": 5,
+        "pre_delay_max": 15,
+        "post_delay_min": 3,
+        "post_delay_max": 8
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/tickets/{{prev.ticket_id}}/comments",
+        "body": {
+          "author": "gc-systems",
+          "text": "Telemetry review complete. Pressure drop caused by micro-bubble formation in the iodine injection line — a known transient that resolves within 2 hours. No hardware fault. System nominal as of 06:42 UTC. Closing after crew notification."
+        },
+        "description": "Systems engineer posts root cause analysis",
+        "crew_id": "gc-systems",
+        "pre_delay_min": 30,
+        "pre_delay_max": 90,
+        "post_delay_min": 5,
+        "post_delay_max": 10
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/tickets/{{prev.ticket_id}}",
         "body": {
           "status": "closed"
         },
-        "description": "close the ticket immediately — no action required"
-      }
-    ]
-  },
-  {
-    "name": "Create KB article — EVA suit pressure checklist",
-    "steps": [
-      {
-        "method": "POST",
-        "path": "/articles",
-        "body": {
-          "title": "EVA Suit Pre-Egress Pressure Verification Checklist",
-          "category": "eva",
-          "body": "## Purpose\nVerify suit integrity before each EVA egress.\n\n## Steps\n1. Don suit and connect umbilical.\n2. Perform suit donning checks per PLSS checklist.\n3. Pressurize to 4.3 psi; hold 5 minutes.\n4. Verify pressure loss < 0.1 psi — if exceeded, abort and notify CAPCOM.\n5. Switch to O2 prebreathe protocol (60 min at 10.2 psi cabin).\n6. Final go/no-go from Flight Surgeon before egress.\n\n## References\n- EMU Operations Manual, Section 7.4\n- PLSS Checklist Card EVA-02",
-          "tags": ["eva", "suit", "pressure", "checklist", "pre-egress"]
-        },
-        "description": "publish a new EVA suit pressure checklist article"
-      }
-    ]
-  },
-  {
-    "name": "Create and archive KB article — superseded power procedure",
-    "steps": [
-      {
-        "method": "POST",
-        "path": "/articles",
-        "body": {
-          "title": "Solar Array Manual Retrack Procedure (Rev A — superseded)",
-          "category": "power",
-          "body": "## Status\nThis procedure is superseded by Rev B. Retained for reference only.\n\n## Legacy Steps\n1. Inhibit auto-track via GNC console.\n2. Select MANUAL on SARJ panel.\n3. Command retrack at 0.5 deg/s.\n4. Monitor current draw; abort if > 8A.\n5. Re-enable auto-track after retrack complete.",
-          "tags": ["power", "solar-array", "manual", "superseded"]
-        },
-        "description": "publish the old solar array procedure (will be archived immediately)"
-      },
-      {
-        "method": "PATCH",
-        "path": "/articles/{{prev.id}}",
-        "body": {
-          "archived": true
-        },
-        "description": "archive the superseded article so curators can demo the duplicates workflow"
+        "description": "Ground Control resolves the WCS pressure ticket",
+        "crew_id": "gc-systems",
+        "pre_delay_min": 5,
+        "pre_delay_max": 12,
+        "post_delay_min": 3,
+        "post_delay_max": 8
       }
     ]
   }

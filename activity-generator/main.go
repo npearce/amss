@@ -1,20 +1,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 )
 
 func main() {
 	bffURL := getEnv("BFF_URL", "http://localhost:8080")
 	scenarioFile := getEnv("SCENARIO_FILE", "scenarios.json")
-	pauseSec, err := strconv.Atoi(getEnv("PAUSE_SECONDS", "5"))
-	if err != nil || pauseSec < 0 {
-		log.Fatalf("invalid PAUSE_SECONDS: must be a non-negative integer")
+	cycleMins, err := strconv.Atoi(getEnv("CYCLE_MINUTES", "22"))
+	if err != nil || cycleMins <= 0 {
+		log.Fatalf("invalid CYCLE_MINUTES: must be a positive integer")
 	}
 
 	scenarios, err := LoadScenarios(scenarioFile)
@@ -22,18 +25,28 @@ func main() {
 		log.Fatalf("load scenarios: %v", err)
 	}
 
-	fmt.Printf("activity-generator: loaded %d scenarios, BFF=%s\n", len(scenarios), bffURL)
+	fmt.Printf("activity-generator: loaded %d scenarios, BFF=%s, cycle=%dm\n", len(scenarios), bffURL, cycleMins)
 
 	client := &http.Client{Timeout: 30 * time.Second}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	for i, s := range scenarios {
-		if i > 0 && pauseSec > 0 {
-			time.Sleep(time.Duration(pauseSec) * time.Second)
+	for ctx.Err() == nil {
+		cycleCtx, cancel := context.WithTimeout(ctx, time.Duration(cycleMins)*time.Minute)
+		RunCycle(cycleCtx, client, bffURL, scenarios)
+		cancel()
+
+		if ctx.Err() != nil {
+			break
 		}
-		RunScenario(client, bffURL, s)
+
+		if err := ResetStores(ctx, client, bffURL); err != nil {
+			logf("WARNING: reset stores failed: %v", err)
+		}
+		logf("Cycle complete — resetting stores for next cycle...")
 	}
 
-	fmt.Println("activity-generator: done")
+	logf("Shutting down activity generator")
 }
 
 func getEnv(key, def string) string {
