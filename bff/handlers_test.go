@@ -19,6 +19,7 @@ func testConfig() *Config {
 		TicketStoreURL:         "http://unused-ticket:9999",
 		CrewStoreURL:           "http://unused-crew:9999",
 		MissionSupportAgentURL: "http://unused-agent:9999",
+		KagentAgentNamespace:   "kagent",
 		KBCuratorAgentURL:      "http://unused-curator:9999",
 	}
 }
@@ -257,15 +258,16 @@ func TestProxyCrewRoutes(t *testing.T) {
 	}
 }
 
-// TestHandleChat_Success verifies a valid chat request calls the agent and logs the conversation.
+// TestHandleChat_Success verifies a valid chat request calls the agent via A2A and logs the conversation.
 func TestHandleChat_Success(t *testing.T) {
-	agentPayload := `{"response":"Pressure nominal","kb_articles_referenced":["KB-001"],"ticket_created":null}`
+	a2aPayload := `{"jsonrpc":"2.0","id":"sess-001","result":{"artifacts":[{"parts":[{"kind":"text","text":"Pressure nominal"}]}],"history":[{"role":"tool","parts":[{"kind":"text","text":"Read KB-001 for WCS pressure."}]}]}}`
 	mockAgent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat" || r.Method != http.MethodPost {
-			t.Errorf("agent got %s %s, want POST /chat", r.Method, r.URL.Path)
+		wantPath := "/api/a2a/kagent/mission-support-agent/"
+		if r.URL.Path != wantPath || r.Method != http.MethodPost {
+			t.Errorf("agent got %s %s, want POST %s", r.Method, r.URL.Path, wantPath)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, agentPayload)
+		fmt.Fprint(w, a2aPayload)
 	}))
 	defer mockAgent.Close()
 
