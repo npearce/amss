@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type Envelope struct {
@@ -150,8 +153,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		agentResp = stubChatResponse(req.Message)
 	} else {
 		var err error
-		agentResp, err = s.callMissionAgent(req)
+		agentResp, err = s.callMissionAgent(r.Context(), req)
 		if err != nil {
+			log.Printf("Agent call failed, falling back to stub: %v", err)
 			agentResp = stubChatResponse(req.Message)
 			agentResp.Response = "[Agent unavailable — using knowledge base stub]\n\n" + agentResp.Response
 		}
@@ -169,6 +173,7 @@ func (s *Server) handleCurate(w http.ResponseWriter, r *http.Request) {
 
 	req, err := http.NewRequest(http.MethodPost, s.cfg.KBCuratorAgentURL+"/curate", r.Body)
 	if err != nil {
+		log.Printf("Agent call failed, falling back to stub: %v", err)
 		report := stubCuratorReport()
 		report.Summary = "[Curator agent unavailable] " + report.Summary
 		respondJSON(w, http.StatusOK, report)
@@ -178,6 +183,7 @@ func (s *Server) handleCurate(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		log.Printf("Agent call failed, falling back to stub: %v", err)
 		report := stubCuratorReport()
 		report.Summary = "[Curator agent unavailable] " + report.Summary
 		respondJSON(w, http.StatusOK, report)
@@ -215,23 +221,29 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) callMissionAgent(req ChatRequest) (*ChatResponse, error) {
-	payload, _ := json.Marshal(req)
-	resp, err := http.Post(s.cfg.MissionSupportAgentURL+"/chat", "application/json", bytes.NewReader(payload))
+func (s *Server) callMissionAgent(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	agentURL := fmt.Sprintf("%s/api/a2a/%s/mission-support-agent/",
+		s.cfg.MissionSupportAgentURL, s.cfg.KagentAgentNamespace)
+
+	callCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	a2aResp, err := callAgent(callCtx, http.DefaultClient, agentURL, req.SessionID, req.Message)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	var agentResp ChatResponse
-	if err := json.Unmarshal(body, &agentResp); err != nil {
-		return nil, fmt.Errorf("invalid agent response: %v", err)
+	text := extractAgentText(a2aResp)
+	if text == "" {
+		text = "The agent returned an empty response."
 	}
-	if agentResp.KBArticlesReferenced == nil {
-		agentResp.KBArticlesReferenced = []string{}
-	}
-	return &agentResp, nil
+	refs := extractKBReferences(a2aResp)
+
+	return &ChatResponse{
+		Response:             text,
+		KBArticlesReferenced: refs,
+		TicketCreated:        nil,
+	}, nil
 }
 
 func (s *Server) logConversation(req ChatRequest, agentResp *ChatResponse) {
