@@ -1,11 +1,10 @@
-# BFF external access via NodePort.
+# Debug only — direct NodePort access bypasses agentgateway.
+# For normal access, use kubectl port-forward to the agentgateway proxy:
+#   kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
+#   open http://localhost:8080
 #
-# OrbStack: the NodePort is accessible at http://localhost:30080
-# kind:     find the node IP with `kubectl get nodes -o wide`, then http://<node-ip>:30080
-#
-# Alternative (works on any cluster, no NodePort needed):
-#   kubectl port-forward svc/bff 8080:8080 -n amss
-#   then curl http://localhost:8080/health
+# OrbStack NodePort: http://localhost:30080  (BFF only — frontend API calls won't work)
+# kind:              find node IP with `kubectl get nodes -o wide`, then http://<node-ip>:30080
 #
 apiVersion: v1
 kind: Service
