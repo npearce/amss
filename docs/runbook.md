@@ -34,20 +34,11 @@ kmcp version
 Contact your Solo account representative to obtain:
 
 ```bash
-export AGENTGATEWAY_LICENSE_KEY=<key>   # Phase 3
-export SOLO_ISTIO_LICENSE_KEY=<key>     # Phase 4
-export GLOO_GATEWAY_LICENSE_KEY=<key>   # Phase 4
+export AGENTGATEWAY_LICENSE_KEY=<key>   # Used for agentgateway, kagent, and management chart
+export ANTHROPIC_API_KEY=<key>          # LLM provider for agents
 ```
 
 Store these securely. Do not commit them to the repo.
-
-### LLM API Key
-
-Required for agents (Phase 4):
-
-```bash
-export ANTHROPIC_API_KEY=<key>
-```
 
 ### Clone the Repo
 
@@ -182,7 +173,7 @@ go vet ./...
 cd ..
 ```
 
-103 tests covering proxy routes (root-path and `/api/v1/` variants), stub chat and curator responses, CORS, reset, and agent fallback behavior. Stub mode includes 12 keyword patterns that return realistic canned responses citing real KB article IDs.
+120 tests covering proxy routes (root-path and `/api/v1/` variants), stub chat and curator responses, CORS, reset, agent fallback behavior, and A2A client (`a2a.go`) — callAgent success/error/timeout/invalid-JSON, extractAgentText edge cases, extractKBReferences deduplication. Stub mode includes 12 keyword patterns that return realistic canned responses citing real KB article IDs.
 
 ### 1.5 Agents
 
@@ -274,43 +265,73 @@ The script:
 4. Waits for all 7 deployments to reach Ready
 5. Prints access URLs
 
-On success:
+On success (with agentgateway already installed):
 ```
 ==> All deployments ready.
 
-  agentgateway:  http://192.168.139.2        (frontend + BFF via gateway)
-  Frontend:      http://localhost:30081       (NodePort direct — dev/debug only)
-  BFF API:       http://localhost:30080       (NodePort direct — dev/debug only)
+Access the application:
+  Frontend + API:  http://192.168.139.2      (via agentgateway)
+  BFF API:         http://192.168.139.2/api/v1
+
+  Debug (direct NodePort, no gateway):
+    BFF API only:  http://localhost:30080
+    Frontend only: http://localhost:30081  (API calls won't work without gateway)
 ```
+
+If agentgateway is not yet installed the gateway IP line is replaced with: `agentgateway not installed yet — install in Phase 3 for primary access.`
 
 ### 2.3 Verify
 
-**BFF health (direct NodePort):**
+agentgateway (Phase 3) is the primary access path. If you haven't installed it yet, use the NodePort fallback for BFF-only verification.
+
 ```bash
-curl -s http://localhost:30080/health
+# Detect gateway IP (empty if agentgateway not installed yet)
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
+```
+
+**BFF health:**
+```bash
+# Via agentgateway (primary — after Phase 3)
+curl -s http://${GATEWAY_IP}/health
 # {"data":{"status":"ok","service":"bff"},"error":null}
+
+# Via NodePort (debug fallback)
+curl -s http://localhost:30080/health
 ```
 
 **Crew store (20 members):**
 ```bash
+# Via agentgateway (primary)
+curl -s http://${GATEWAY_IP}/api/v1/crew | jq '.data.total'
+
+# Via NodePort (debug fallback)
 curl -s http://localhost:30080/api/v1/crew | jq '.data.total'
 # 20
 ```
 
 **KB store (30 articles):**
 ```bash
-curl -s http://localhost:30080/api/v1/kb | jq '.data.total'
+curl -s http://${GATEWAY_IP}/api/v1/kb | jq '.data.total'      # via gateway
+curl -s http://localhost:30080/api/v1/kb | jq '.data.total'     # NodePort fallback
 # 30
 ```
 
 **Ticket store (15 tickets):**
 ```bash
-curl -s http://localhost:30080/api/v1/tickets | jq '.data.total'
+curl -s http://${GATEWAY_IP}/api/v1/tickets | jq '.data.total'  # via gateway
+curl -s http://localhost:30080/api/v1/tickets | jq '.data.total' # NodePort fallback
 # 15
 ```
 
 **Chat (stub mode — no agent required):**
 ```bash
+# Via agentgateway (primary)
+curl -s -X POST http://${GATEWAY_IP}/api/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"crew_id":"wiseman-r","session_id":"test-001","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
+  | jq '.data'
+
+# Via NodePort (debug fallback)
 curl -s -X POST http://localhost:30080/api/v1/chat \
   -H 'Content-Type: application/json' \
   -d '{"crew_id":"wiseman-r","session_id":"test-001","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
@@ -321,9 +342,7 @@ Expected response references KB-001 (the WCS toilet pressure fault article).
 
 **KB curation (stub mode):**
 ```bash
-curl -s -X POST http://localhost:30080/api/v1/curator \
-  -H 'Content-Type: application/json' \
-  -d '{}' \
+curl -s -X POST http://${GATEWAY_IP}/api/v1/curator -H 'Content-Type: application/json' -d '{}' \
   | jq '.data.duplicates_flagged'
 # 3
 ```
@@ -332,15 +351,21 @@ Returns 3 near-duplicate WCS articles flagged against KB-001.
 
 **Reset all stores to seed data:**
 ```bash
-curl -s -X POST http://localhost:30080/api/v1/reset | jq '.data'
+curl -s -X POST http://${GATEWAY_IP}/api/v1/reset | jq '.data'
 ```
 
-> **NodePort note**: the frontend at `localhost:30081` makes relative `/api/v1/...` calls which resolve against `localhost:30081` — the frontend service, not the BFF. Direct NodePort access is BFF-only for manual API testing. Use agentgateway (Phase 3) for a working end-to-end UI flow, or `npm run dev` in local dev.
+> **NodePort note**: NodePort access is debug-only. The frontend at `localhost:30081` makes relative `/api/v1/...` calls that resolve against `localhost:30081` — the frontend service, not the BFF — so the UI won't work end-to-end. agentgateway (Phase 3) is the intended access path: frontend and BFF sit behind the same host so relative paths route correctly. For local frontend dev without k8s, use `npm run dev` (Vite proxy handles routing).
 
 ### 2.4 Run Activity Generator Against k8s
 
 ```bash
 cd activity-generator
+
+# Via agentgateway (primary)
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
+BFF_URL=http://${GATEWAY_IP} go run .
+
+# Via NodePort (if agentgateway not installed yet)
 BFF_URL=http://localhost:30080 go run .
 ```
 
@@ -348,9 +373,9 @@ One cycle fires 6 scenarios concurrently against the live BFF. After the cycle t
 
 Verify one cycle landed:
 ```bash
-curl -s http://localhost:30080/api/v1/tickets | jq '.data.total'
+curl -s http://${GATEWAY_IP}/api/v1/tickets | jq '.data.total'
 # 18 (15 seed + 3 created by scenarios 2, 3, 6)
-curl -s http://localhost:30080/api/v1/kb | jq '.data.total'
+curl -s http://${GATEWAY_IP}/api/v1/kb | jq '.data.total'
 # 31 (30 seed + 1 created by scenario 4)
 ```
 
@@ -363,9 +388,9 @@ curl -s http://localhost:30080/api/v1/kb | jq '.data.total'
 | crew-store | 90 |
 | kb-mcp | 45 |
 | ticket-mcp | 61 |
-| bff | 103 |
+| bff | 120 |
 | activity-generator | 46 |
-| **Total** | **480** |
+| **Total** | **497** |
 
 All pass with `-race` flag. Run the full suite from the repo root:
 ```bash
@@ -423,7 +448,7 @@ kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: amss-gateway
+  name: agentgateway-proxy
   namespace: agentgateway-system
 spec:
   gatewayClassName: enterprise-agentgateway
@@ -440,7 +465,7 @@ EOF
 Get the gateway IP (on OrbStack this returns a routable address like `192.168.139.2`):
 
 ```bash
-kubectl get gateway amss-gateway -n agentgateway-system \
+kubectl get gateway agentgateway-proxy -n agentgateway-system \
   -o jsonpath='{.status.addresses[0].value}'
 ```
 
@@ -466,28 +491,22 @@ kubectl get httproute -n amss -o wide
 
 Both routes should show `Accepted` and `ResolvedRefs`.
 
-### 3.5 Install Solo Enterprise UI
+> **Note**: The Solo Enterprise UI is installed in Phase 4 alongside kagent. agentgateway observability features require the management chart which is installed in the `kagent` namespace.
+
+### 3.5 Access the Application
 
 ```bash
-helm upgrade -i management \
-  oci://us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts/management \
-  --namespace agentgateway-system \
-  --version 0.3.19 \
-  --set cluster="mgmt-cluster" \
-  --set products.agentgateway.enabled=true \
-  --set-string licensing.licenseKey=${AGENTGATEWAY_LICENSE_KEY}
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}')
+echo "Frontend: http://${GATEWAY_IP}"
+echo "BFF API:  http://${GATEWAY_IP}/api/v1"
 ```
 
-Access the UI:
-```bash
-kubectl port-forward service/solo-enterprise-ui -n agentgateway-system 4000:80 &
-open http://localhost:4000
-```
+Open the frontend URL in a browser — the full UI works end-to-end through the gateway.
 
 ### 3.6 Verify Full Stack Through agentgateway
 
 ```bash
-GATEWAY_IP=$(kubectl get gateway amss-gateway -n agentgateway-system \
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system \
   -o jsonpath='{.status.addresses[0].value}')
 
 # BFF health
@@ -514,7 +533,7 @@ open http://${GATEWAY_IP}
 
 ```bash
 cd activity-generator
-GATEWAY_IP=$(kubectl get gateway amss-gateway -n agentgateway-system \
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system \
   -o jsonpath='{.status.addresses[0].value}')
 BFF_URL=http://${GATEWAY_IP} go run .
 ```
@@ -548,12 +567,9 @@ helm upgrade -i kagent-crds \
 
 ### 4.3 Install Management Chart in kagent Namespace
 
-The management chart must be in the `kagent` namespace — the kagent controller expects `solo-enterprise-ui` in its own namespace for OIDC. If you previously installed it in `agentgateway-system`, uninstall it first (the CRDs are cluster-scoped and conflict if installed twice):
+The management chart must be in the `kagent` namespace — the kagent controller expects `solo-enterprise-ui` in its own namespace for OIDC:
 
 ```bash
-# Only if previously installed in agentgateway-system:
-helm uninstall management -n agentgateway-system
-
 helm upgrade -i kagent-mgmt \
   oci://us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts/management \
   --namespace kagent \
@@ -622,7 +638,15 @@ kubectl get pods -n kagent
 
 Expected pods: `kagent-controller`, `kagent-postgresql`, `kmcp-enterprise-controller-manager`, `kagent-mgmt-clickhouse`, `solo-enterprise-telemetry-collector`, `solo-enterprise-ui`.
 
-### 4.6 Create ModelConfig
+### 4.6 Access Solo Enterprise UIs
+
+```bash
+# kagent + agentgateway UI (management chart is in kagent namespace)
+kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
+open http://localhost:4000
+```
+
+### 4.7 Create ModelConfig
 
 The `provider` field is case-sensitive — must be `Anthropic` not `anthropic`:
 
@@ -639,7 +663,7 @@ spec:
 EOF
 ```
 
-### 4.7 Register MCP Servers as RemoteMCPServer CRDs
+### 4.8 Register MCP Servers as RemoteMCPServer CRDs
 
 The `allowedNamespaces.from: All` field is required because agents live in the `kagent` namespace but the MCP servers are in `amss`:
 
@@ -673,7 +697,7 @@ spec:
 EOF
 ```
 
-### 4.8 Deploy Agents
+### 4.9 Deploy Agents
 
 Agents live in the `kagent` namespace so they share the namespace with `default-model-config`. The agent YAMLs already have `namespace: kagent` and explicit `modelConfig: default-model-config`:
 
@@ -690,7 +714,7 @@ kubectl get agents -n kagent
 
 Expected: both show `READY: True` and `ACCEPTED: True`.
 
-### 4.9 Test Agent via A2A
+### 4.10 Test Agent via A2A
 
 ```bash
 kubectl port-forward svc/kagent-controller -n kagent 8083:8083 &
@@ -716,11 +740,32 @@ curl --max-time 120 -X POST http://localhost:8083/api/a2a/kagent/mission-support
 
 Expected: agent runs `search_kb`, reads KB-001, returns a formatted procedure response with panel locations and valve IDs. Full chain confirmed: user → kagent A2A → Claude Sonnet 4.6 → MCP tools → KB Store → response.
 
-### 4.10 Remaining Steps (TODO)
+### 4.11 Enable Live Agent Mode on BFF
 
-- Wire BFF to kagent A2A endpoint, set `STUB_MODE=false`
+```bash
+kubectl set env deployment/bff -n amss \
+  STUB_MODE=false \
+  MISSION_SUPPORT_AGENT_URL=http://kagent-controller.kagent.svc.cluster.local:8083 \
+  KAGENT_AGENT_NAMESPACE=kagent
+```
+
+Verify live agent response:
+
+```bash
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}')
+curl -s -X POST http://${GATEWAY_IP}/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"crew_id":"wiseman-r","mission":"artemis-ii","session_id":"test-1","message":"What is the WCS flush procedure?"}' | jq '.data.response'
+```
+
+Expected: a detailed response citing KB-001 with panel locations and valve IDs — this is Claude Sonnet 4.6 responding via kagent, not a stub.
+
+Then open the frontend at `http://${GATEWAY_IP}` and test chat in the browser.
+
+### 4.12 Remaining Steps (TODO)
+
 - Configure agentgateway egress for LLM traffic (guardrails, model failover)
-- End-to-end test from frontend through agentgateway to live agents
+- Enable ambient mesh for east-west mTLS observability
 
 ---
 
@@ -786,12 +831,15 @@ orb restart k8s
 
 The BFF handles both root-path routes (for local dev via Vite proxy) and `/api/v1/` routes (for k8s). The `/api/v1/kb` path is rewritten to `/articles` at the kb-store. Confirm with:
 ```bash
+# Via agentgateway (primary)
+curl -s http://${GATEWAY_IP}/api/v1/kb/KB-001 | jq '.data.title'
+# Via NodePort (debug fallback)
 curl -s http://localhost:30080/api/v1/kb/KB-001 | jq '.data.title'
 ```
 
 ### Frontend can't reach BFF in k8s
 
-The frontend makes relative `/api/v1/...` calls. These only work when frontend and BFF are behind the same host (agentgateway at `192.168.139.2`). Direct NodePort access at `localhost:30081` routes relative calls back to the frontend service, not the BFF.
+The frontend makes relative `/api/v1/...` calls. These only work when frontend and BFF are behind the same gateway host. Direct NodePort access at `localhost:30081` routes relative calls back to the frontend service, not the BFF — agentgateway is the intended access path.
 
 Options:
 - Use agentgateway (Phase 3) for end-to-end frontend access
@@ -822,7 +870,7 @@ kubectl describe httproute bff-api-route -n amss
 kubectl describe httproute frontend-route -n amss
 ```
 
-The `parentRef` on both routes must match `amss-gateway` in `agentgateway-system` exactly.
+The `parentRef` on both routes must match `agentgateway-proxy` in `agentgateway-system` exactly.
 
 ### kmcp deploy fails
 
@@ -865,3 +913,4 @@ Two common causes:
 | 2026-05-09 | Phase 2 | k8s manifests for all 7 services. `deploy.sh` + `teardown.sh`. Frontend behind NodePort 30081, BFF at NodePort 30080. Activity generator v2 rewrite: humanized 22-minute cycles, 6 narrative scenarios, concurrent goroutines, graceful SIGINT shutdown, `stash_as` carry mechanism for ticket IDs, context cancellation throughout. 451 → 480 total tests. |
 | 2026-05-09 | Phase 3 | Solo Enterprise agentgateway installed. Gateway at `192.168.139.2`. HTTPRoutes: `/api/v1/*` → BFF, `/*` → frontend. ReferenceGrant for cross-namespace access. Solo Enterprise UI at localhost:4000 via port-forward. Frontend `VITE_API_URL` removed from build — SPA uses relative paths that work through the gateway. Fixed `crypto.randomUUID` fallback for plain-HTTP contexts. Fixed activity generator ticket create field names (`category`, `reported_by`, `assigned_to`). |
 | 2026-05-10 | Phase 4 | kagent Enterprise installed in `kagent` namespace with Anthropic provider (claude-sonnet-4-6). ModelConfig, RemoteMCPServer CRDs, and Agent CRDs applied. Both agents (mission-support-agent, kb-curator-agent) show READY: True. Full A2A chain verified: user → kagent → Claude Sonnet 4.6 → MCP tools → KB Store. Management chart moved from `agentgateway-system` to `kagent` namespace. Key gotchas: management chart namespace, `allowedNamespaces.from: All` on RemoteMCPServer, explicit `modelConfig` in agent YAML, trailing slash on A2A URL, `"kind"` not `"type"` in message parts. Remaining: BFF wiring, agentgateway LLM egress, frontend end-to-end. |
+| 2026-05-11 | Phase 4 | BFF wired to kagent A2A endpoint (`a2a.go`, 17 new tests, 480 → 497 total). `STUB_MODE=false` enables real LLM responses. Full end-to-end chain verified: frontend → agentgateway → BFF → kagent A2A → Claude Sonnet 4.6 → MCP tools → KB Store. Runbook cleanup: consolidated management chart install to `kagent` namespace only (removed Phase 3 UI install step), added Access the Application section to Phase 3, added Access Solo Enterprise UIs section to Phase 4, replaced TODO list with completed BFF wiring steps. License keys simplified to two vars: `AGENTGATEWAY_LICENSE_KEY` and `ANTHROPIC_API_KEY`. |

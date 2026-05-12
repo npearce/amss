@@ -1,7 +1,7 @@
 # agentgateway-routes.yaml
 #
 # Attaches the AMSS services to the Solo Enterprise agentgateway.
-# Gateway: amss-gateway in agentgateway-system (address: 192.168.139.2, port: 80)
+# Gateway: agentgateway-proxy in agentgateway-system (address: 192.168.139.2, port: 80)
 #
 # Routing:
 #   http://192.168.139.2/api/v1/* → bff service port 8080  (higher priority — longer prefix)
@@ -45,7 +45,7 @@ metadata:
     app.kubernetes.io/part-of: amss
 spec:
   parentRefs:
-  - name: amss-gateway
+  - name: agentgateway-proxy
     namespace: agentgateway-system
     group: gateway.networking.k8s.io
     kind: Gateway
@@ -70,7 +70,7 @@ metadata:
     app.kubernetes.io/part-of: amss
 spec:
   parentRefs:
-  - name: amss-gateway
+  - name: agentgateway-proxy
     namespace: agentgateway-system
     group: gateway.networking.k8s.io
     kind: Gateway

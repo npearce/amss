@@ -49,7 +49,7 @@ kubectl apply -f k8s/bff-ingress.yaml
 kubectl apply -f k8s/frontend.yaml
 
 # agentgateway HTTPRoutes — attach services to the Solo Enterprise gateway.
-# Requires amss-gateway to exist in agentgateway-system (Phase 3).
+# Requires agentgateway-proxy to exist in agentgateway-system (Phase 3).
 # Safe to apply even if the gateway isn't installed yet — routes will attach
 # once the gateway appears.
 kubectl apply -f k8s/agentgateway-routes.yaml
@@ -67,10 +67,15 @@ kubectl rollout status deployment/frontend     -n amss --timeout=120s
 echo ""
 echo "==> All deployments ready."
 echo ""
-echo "  agentgateway:  http://192.168.139.2        (frontend + BFF via gateway)"
-echo "  Frontend:      http://localhost:30081       (NodePort direct — dev/debug only)"
-echo "  BFF API:       http://localhost:30080       (NodePort direct — dev/debug only)"
+echo "Access the application:"
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
+if [ -n "$GATEWAY_IP" ]; then
+  echo "  Frontend + API:  http://${GATEWAY_IP}      (via agentgateway)"
+  echo "  BFF API:         http://${GATEWAY_IP}/api/v1"
+else
+  echo "  agentgateway not installed yet — install in Phase 3 for primary access."
+fi
 echo ""
-echo "Quick health check:"
-echo "  curl http://192.168.139.2/health            # via gateway"
-echo "  curl http://localhost:30080/health           # direct NodePort"
+echo "  Debug (direct NodePort, no gateway):"
+echo "    BFF API only:  http://localhost:30080"
+echo "    Frontend only: http://localhost:30081  (API calls won't work without gateway)"
