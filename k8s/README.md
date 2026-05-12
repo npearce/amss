@@ -34,22 +34,25 @@ The script:
 
 ### Via agentgateway (primary — Phase 3+)
 
-Solo Enterprise agentgateway is the primary access point once installed.
-Both frontend and BFF sit behind the same gateway address.
+Solo Enterprise agentgateway is the primary access point. Both frontend and BFF sit behind the same gateway address, so the SPA's relative `/api/v1/...` calls route correctly.
+
+Get the gateway IP (OrbStack assigns a routable address like `192.168.139.2`):
+```bash
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system \
+  -o jsonpath='{.status.addresses[0].value}')
+```
 
 | | URL |
 |---|---|
-| Frontend | http://192.168.139.2/ |
-| BFF API | http://192.168.139.2/api/v1/ |
+| Frontend + API | http://${GATEWAY_IP}/ |
+| BFF API | http://${GATEWAY_IP}/api/v1/ |
 
 ```bash
-open http://192.168.139.2/
+open http://${GATEWAY_IP}/
 
-curl http://192.168.139.2/health
-curl http://192.168.139.2/api/v1/crew | jq '.data.total'
+curl http://${GATEWAY_IP}/health
+curl http://${GATEWAY_IP}/api/v1/crew | jq '.data.total'
 ```
-
-Because both the frontend and BFF are behind the same host, the frontend SPA calls `/api/v1/...` as a **relative path** — no `VITE_API_URL` is baked into the image. The agentgateway routes `/api/v1/*` to the BFF and everything else to the frontend.
 
 HTTPRoutes are in `k8s/agentgateway-routes.yaml`. Check attachment status:
 ```bash
@@ -58,17 +61,16 @@ kubectl get httproute -n amss
 
 ### OrbStack NodePort (direct — dev/debug only)
 
+NodePort access is a debug fallback for BFF-only verification. The frontend does **not** work end-to-end via NodePort — relative `/api/v1/...` calls from `localhost:30081` resolve against the frontend service, not the BFF.
+
 | Service | URL |
 |---|---|
-| Frontend | http://localhost:30081 |
-| BFF API | http://localhost:30080 |
+| BFF API only | http://localhost:30080 |
+| Frontend only | http://localhost:30081 |
 
 ```bash
-open http://localhost:30081
 curl http://localhost:30080/health
 ```
-
-Note: when accessing the frontend via NodePort directly (not through agentgateway), the SPA makes relative `/api/v1/...` calls which resolve against `localhost:30081` — the frontend service, not the BFF. Use agentgateway for a working end-to-end flow, or run the frontend in dev mode with `npm run dev` (Vite proxy handles the routing).
 
 ### Any cluster (port-forward)
 
@@ -81,43 +83,49 @@ kubectl port-forward svc/bff 8080:8080 -n amss &
 
 ## Verify Each Service
 
-Commands use the agentgateway address `192.168.139.2`. Substitute `localhost:30080` for direct BFF NodePort access.
+Commands use `${GATEWAY_IP}` — set it first:
+```bash
+GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system \
+  -o jsonpath='{.status.addresses[0].value}')
+```
+
+Substitute `localhost:30080` for direct BFF NodePort access if agentgateway is not installed.
 
 ### Frontend (via gateway)
 ```bash
-open http://192.168.139.2/
+open http://${GATEWAY_IP}/
 # Astronaut Chat at /chat, Ground Control at /ground-control
 ```
 
 ### BFF health
 ```bash
-curl http://192.168.139.2/health
+curl http://${GATEWAY_IP}/health
 # {"data":{"status":"ok","service":"bff"},"error":null}
 ```
 
 ### KB store (via BFF — /api/v1 prefix)
 ```bash
-curl http://192.168.139.2/api/v1/kb | jq '.data.total'
+curl http://${GATEWAY_IP}/api/v1/kb | jq '.data.total'
 # 30
-curl http://192.168.139.2/api/v1/kb/KB-001 | jq '.data.title'
+curl http://${GATEWAY_IP}/api/v1/kb/KB-001 | jq '.data.title'
 ```
 
 ### Ticket store (via BFF)
 ```bash
-curl http://192.168.139.2/api/v1/tickets | jq '.data.total'
+curl http://${GATEWAY_IP}/api/v1/tickets | jq '.data.total'
 # 15
-curl http://192.168.139.2/api/v1/tickets/AMSS-001 | jq '.data.title'
+curl http://${GATEWAY_IP}/api/v1/tickets/AMSS-001 | jq '.data.title'
 ```
 
 ### Crew store (via BFF)
 ```bash
-curl http://192.168.139.2/api/v1/crew | jq '.data.total'
+curl http://${GATEWAY_IP}/api/v1/crew | jq '.data.total'
 # 20
 ```
 
 ### Chat (stub mode — no agent required)
 ```bash
-curl -s -X POST http://192.168.139.2/api/v1/chat \
+curl -s -X POST http://${GATEWAY_IP}/api/v1/chat \
   -H 'Content-Type: application/json' \
   -d '{"crew_id":"wiseman-r","session_id":"test-001","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
   | jq '.data'
@@ -125,7 +133,7 @@ curl -s -X POST http://192.168.139.2/api/v1/chat \
 
 ### KB curation (stub mode)
 ```bash
-curl -s -X POST http://192.168.139.2/api/v1/curator \
+curl -s -X POST http://${GATEWAY_IP}/api/v1/curator \
   -H 'Content-Type: application/json' \
   -d '{}' \
   | jq '.data.duplicates_flagged'
@@ -133,7 +141,7 @@ curl -s -X POST http://192.168.139.2/api/v1/curator \
 
 ### Reset all stores to seed data
 ```bash
-curl -s -X POST http://192.168.139.2/api/v1/reset | jq '.data'
+curl -s -X POST http://${GATEWAY_IP}/api/v1/reset | jq '.data'
 ```
 
 ### Direct store access (port-forward to individual services)
@@ -163,14 +171,14 @@ All deployments use `imagePullPolicy: Never` — images must be built locally be
 | `bff-api-route` | HTTPRoute | Routes `/api/v1/*` → bff:8080 (higher priority — longer prefix) |
 | `frontend-route` | HTTPRoute | Routes `/*` → frontend:80 (catch-all) |
 
-Both HTTPRoutes attach to `amss-gateway` in `agentgateway-system` via `parentRefs`. Check attachment:
+Both HTTPRoutes attach to `agentgateway-proxy` in `agentgateway-system` via `parentRefs`. Check attachment:
 ```bash
 kubectl get httproute -n amss -o wide
 ```
 
 ### Frontend API URL
 
-`VITE_API_URL` is **not set** in the production build. The SPA calls `/api/v1/...` as a relative path, which works when the frontend and BFF are behind the same gateway host (`192.168.139.2`). The gateway routes `/api/v1/*` to the BFF and `/*` to the frontend.
+`VITE_API_URL` is **not set** in the production build. The SPA calls `/api/v1/...` as a relative path, which works when the frontend and BFF are behind the same gateway host (`${GATEWAY_IP}`). The gateway routes `/api/v1/*` to the BFF and `/*` to the frontend.
 
 To build for direct NodePort access without agentgateway (dev/debug):
 ```bash
