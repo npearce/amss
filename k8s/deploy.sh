@@ -67,15 +67,14 @@ kubectl rollout status deployment/frontend     -n amss --timeout=120s
 echo ""
 echo "==> All deployments ready."
 echo ""
-echo "Access the application:"
-GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
-if [ -n "$GATEWAY_IP" ]; then
-  echo "  Frontend + API:  http://${GATEWAY_IP}      (via agentgateway)"
-  echo "  BFF API:         http://${GATEWAY_IP}/api/v1"
-else
-  echo "  agentgateway not installed yet — install in Phase 3 for primary access."
-fi
+echo "  To access the application (through agentgateway):"
+echo "    kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &"
+echo "    open http://localhost:8080"
 echo ""
-echo "  Debug (direct NodePort, no gateway):"
+echo "  To access the Solo Enterprise UI:"
+echo "    kubectl port-forward svc/solo-enterprise-ui -n kagent 4000:80 &"
+echo "    open http://localhost:4000"
+echo ""
+echo "  Debug (direct NodePort, bypasses agentgateway — not recommended):"
 echo "    BFF API only:  http://localhost:30080"
-echo "    Frontend only: http://localhost:30081  (API calls won't work without gateway)"
+echo "    Frontend only: http://localhost:30081 (API calls won't work)"

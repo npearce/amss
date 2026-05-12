@@ -265,74 +265,60 @@ The script:
 4. Waits for all 7 deployments to reach Ready
 5. Prints access URLs
 
-On success (with agentgateway already installed):
+On success:
 ```
 ==> All deployments ready.
 
-Access the application:
-  Frontend + API:  http://192.168.139.2      (via agentgateway)
-  BFF API:         http://192.168.139.2/api/v1
+  To access the application (through agentgateway):
+    kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
+    open http://localhost:8080
 
-  Debug (direct NodePort, no gateway):
+  To access the Solo Enterprise UI:
+    kubectl port-forward svc/solo-enterprise-ui -n kagent 4000:80 &
+    open http://localhost:4000
+
+  Debug (direct NodePort, bypasses agentgateway — not recommended):
     BFF API only:  http://localhost:30080
-    Frontend only: http://localhost:30081  (API calls won't work without gateway)
+    Frontend only: http://localhost:30081 (API calls won't work)
 ```
-
-If agentgateway is not yet installed the gateway IP line is replaced with: `agentgateway not installed yet — install in Phase 3 for primary access.`
 
 ### 2.3 Verify
 
-agentgateway (Phase 3) is the primary access path. If you haven't installed it yet, use the NodePort fallback for BFF-only verification.
+Primary access is through agentgateway via port-forward. Start it once and leave it running:
 
 ```bash
-# Detect gateway IP (empty if agentgateway not installed yet)
-GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
+kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
 ```
+
+> **On OrbStack**, the agentgateway proxy LoadBalancer service does not get an external IP. Port-forwarding is the standard local access method and routes all traffic through agentgateway identically to a production LoadBalancer.
 
 **BFF health:**
 ```bash
-# Via agentgateway (primary — after Phase 3)
-curl -s http://${GATEWAY_IP}/health
+curl -s http://localhost:8080/health
 # {"data":{"status":"ok","service":"bff"},"error":null}
-
-# Via NodePort (debug fallback)
-curl -s http://localhost:30080/health
 ```
 
 **Crew store (20 members):**
 ```bash
-# Via agentgateway (primary)
-curl -s http://${GATEWAY_IP}/api/v1/crew | jq '.data.total'
-
-# Via NodePort (debug fallback)
-curl -s http://localhost:30080/api/v1/crew | jq '.data.total'
+curl -s http://localhost:8080/api/v1/crew | jq '.data.total'
 # 20
 ```
 
 **KB store (30 articles):**
 ```bash
-curl -s http://${GATEWAY_IP}/api/v1/kb | jq '.data.total'      # via gateway
-curl -s http://localhost:30080/api/v1/kb | jq '.data.total'     # NodePort fallback
+curl -s http://localhost:8080/api/v1/kb | jq '.data.total'
 # 30
 ```
 
 **Ticket store (15 tickets):**
 ```bash
-curl -s http://${GATEWAY_IP}/api/v1/tickets | jq '.data.total'  # via gateway
-curl -s http://localhost:30080/api/v1/tickets | jq '.data.total' # NodePort fallback
+curl -s http://localhost:8080/api/v1/tickets | jq '.data.total'
 # 15
 ```
 
 **Chat (stub mode — no agent required):**
 ```bash
-# Via agentgateway (primary)
-curl -s -X POST http://${GATEWAY_IP}/api/v1/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"crew_id":"wiseman-r","session_id":"test-001","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
-  | jq '.data'
-
-# Via NodePort (debug fallback)
-curl -s -X POST http://localhost:30080/api/v1/chat \
+curl -s -X POST http://localhost:8080/api/v1/chat \
   -H 'Content-Type: application/json' \
   -d '{"crew_id":"wiseman-r","session_id":"test-001","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
   | jq '.data'
@@ -342,7 +328,7 @@ Expected response references KB-001 (the WCS toilet pressure fault article).
 
 **KB curation (stub mode):**
 ```bash
-curl -s -X POST http://${GATEWAY_IP}/api/v1/curator -H 'Content-Type: application/json' -d '{}' \
+curl -s -X POST http://localhost:8080/api/v1/curator -H 'Content-Type: application/json' -d '{}' \
   | jq '.data.duplicates_flagged'
 # 3
 ```
@@ -351,31 +337,30 @@ Returns 3 near-duplicate WCS articles flagged against KB-001.
 
 **Reset all stores to seed data:**
 ```bash
-curl -s -X POST http://${GATEWAY_IP}/api/v1/reset | jq '.data'
+curl -s -X POST http://localhost:8080/api/v1/reset | jq '.data'
 ```
 
-> **NodePort note**: NodePort access is debug-only. The frontend at `localhost:30081` makes relative `/api/v1/...` calls that resolve against `localhost:30081` — the frontend service, not the BFF — so the UI won't work end-to-end. agentgateway (Phase 3) is the intended access path: frontend and BFF sit behind the same host so relative paths route correctly. For local frontend dev without k8s, use `npm run dev` (Vite proxy handles routing).
+**NodePort debug fallback** (bypasses agentgateway — BFF only, no frontend):
+```bash
+curl -s http://localhost:30080/health
+```
+
+> **NodePort note**: NodePort access is debug-only and bypasses agentgateway. The frontend at `localhost:30081` makes relative `/api/v1/...` calls that resolve against `localhost:30081` — the frontend service, not the BFF — so the UI won't work end-to-end. Use the port-forward approach above for full stack verification.
 
 ### 2.4 Run Activity Generator Against k8s
 
 ```bash
 cd activity-generator
-
-# Via agentgateway (primary)
-GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
-BFF_URL=http://${GATEWAY_IP} go run .
-
-# Via NodePort (if agentgateway not installed yet)
-BFF_URL=http://localhost:30080 go run .
+BFF_URL=http://localhost:8080 go run .
 ```
 
-One cycle fires 6 scenarios concurrently against the live BFF. After the cycle the stores reset and it repeats. Press Ctrl+C to stop (graceful shutdown).
+Requires the agentgateway port-forward to be running (`kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &`). One cycle fires 6 scenarios concurrently against the live BFF. After the cycle the stores reset and it repeats. Press Ctrl+C to stop (graceful shutdown).
 
 Verify one cycle landed:
 ```bash
-curl -s http://${GATEWAY_IP}/api/v1/tickets | jq '.data.total'
+curl -s http://localhost:8080/api/v1/tickets | jq '.data.total'
 # 18 (15 seed + 3 created by scenarios 2, 3, 6)
-curl -s http://${GATEWAY_IP}/api/v1/kb | jq '.data.total'
+curl -s http://localhost:8080/api/v1/kb | jq '.data.total'
 # 31 (30 seed + 1 created by scenario 4)
 ```
 
@@ -462,13 +447,6 @@ spec:
 EOF
 ```
 
-Get the gateway IP (on OrbStack this returns a routable address like `192.168.139.2`):
-
-```bash
-kubectl get gateway agentgateway-proxy -n agentgateway-system \
-  -o jsonpath='{.status.addresses[0].value}'
-```
-
 ### 3.4 Apply HTTPRoutes
 
 The agentgateway routes are already applied by `deploy.sh`. They live in `k8s/agentgateway-routes.yaml` and create three resources:
@@ -496,49 +474,45 @@ Both routes should show `Accepted` and `ResolvedRefs`.
 ### 3.5 Access the Application
 
 ```bash
-GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}')
-echo "Frontend: http://${GATEWAY_IP}"
-echo "BFF API:  http://${GATEWAY_IP}/api/v1"
+kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
+open http://localhost:8080
 ```
 
-Open the frontend URL in a browser — the full UI works end-to-end through the gateway.
+On OrbStack the agentgateway proxy LoadBalancer service does not receive an external IP. Port-forwarding is the standard local access method and routes all traffic through agentgateway identically to a production LoadBalancer — the HTTPRoutes, ReferenceGrant, and backend selection all apply exactly the same way.
 
 ### 3.6 Verify Full Stack Through agentgateway
 
-```bash
-GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system \
-  -o jsonpath='{.status.addresses[0].value}')
+Port-forward must be running (see §3.5):
 
+```bash
 # BFF health
-curl -s http://${GATEWAY_IP}/health
+curl -s http://localhost:8080/health
 # {"data":{"status":"ok","service":"bff"},"error":null}
 
 # Crew store
-curl -s http://${GATEWAY_IP}/api/v1/crew | jq '.data.total'
+curl -s http://localhost:8080/api/v1/crew | jq '.data.total'
 # 20
 
 # KB store
-curl -s http://${GATEWAY_IP}/api/v1/kb | jq '.data.total'
+curl -s http://localhost:8080/api/v1/kb | jq '.data.total'
 # 30
 
 # Ticket store
-curl -s http://${GATEWAY_IP}/api/v1/tickets | jq '.data.total'
+curl -s http://localhost:8080/api/v1/tickets | jq '.data.total'
 # 15
 
 # Frontend (full UI — works end-to-end via gateway)
-open http://${GATEWAY_IP}
+open http://localhost:8080
 ```
 
 ### 3.7 Run Activity Generator via Gateway
 
 ```bash
 cd activity-generator
-GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system \
-  -o jsonpath='{.status.addresses[0].value}')
-BFF_URL=http://${GATEWAY_IP} go run .
+BFF_URL=http://localhost:8080 go run .
 ```
 
-Traffic flows through the agentgateway and is visible in the Solo Enterprise UI observability dashboard.
+Traffic flows through the agentgateway port-forward and is visible in the Solo Enterprise UI observability dashboard.
 
 ---
 
@@ -749,18 +723,17 @@ kubectl set env deployment/bff -n amss \
   KAGENT_AGENT_NAMESPACE=kagent
 ```
 
-Verify live agent response:
+Verify live agent response (port-forward must be running — see §3.5):
 
 ```bash
-GATEWAY_IP=$(kubectl get gateway agentgateway-proxy -n agentgateway-system -o jsonpath='{.status.addresses[0].value}')
-curl -s -X POST http://${GATEWAY_IP}/api/v1/chat \
+curl -s -X POST http://localhost:8080/api/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"crew_id":"wiseman-r","mission":"artemis-ii","session_id":"test-1","message":"What is the WCS flush procedure?"}' | jq '.data.response'
 ```
 
 Expected: a detailed response citing KB-001 with panel locations and valve IDs — this is Claude Sonnet 4.6 responding via kagent, not a stub.
 
-Then open the frontend at `http://${GATEWAY_IP}` and test chat in the browser.
+Then open the frontend at `http://localhost:8080` and test chat in the browser.
 
 ### 4.12 Remaining Steps (TODO)
 
@@ -831,24 +804,24 @@ orb restart k8s
 
 The BFF handles both root-path routes (for local dev via Vite proxy) and `/api/v1/` routes (for k8s). The `/api/v1/kb` path is rewritten to `/articles` at the kb-store. Confirm with:
 ```bash
-# Via agentgateway (primary)
-curl -s http://${GATEWAY_IP}/api/v1/kb/KB-001 | jq '.data.title'
+# Via agentgateway port-forward (primary)
+curl -s http://localhost:8080/api/v1/kb/KB-001 | jq '.data.title'
 # Via NodePort (debug fallback)
 curl -s http://localhost:30080/api/v1/kb/KB-001 | jq '.data.title'
 ```
 
 ### Frontend can't reach BFF in k8s
 
-The frontend makes relative `/api/v1/...` calls. These only work when frontend and BFF are behind the same gateway host. Direct NodePort access at `localhost:30081` routes relative calls back to the frontend service, not the BFF — agentgateway is the intended access path.
+The frontend makes relative `/api/v1/...` calls. These only work when frontend and BFF are behind the same host. The agentgateway port-forward at `localhost:8080` satisfies this — both routes serve from the same origin so relative paths work. Direct NodePort access at `localhost:30081` routes calls back to the frontend service, not the BFF.
 
 Options:
-- Use agentgateway (Phase 3) for end-to-end frontend access
+- Port-forward agentgateway (primary): `kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &`, then `open http://localhost:8080`
 - Use `npm run dev` locally (Vite proxy routes `/api/v1/*` to `localhost:8080`)
 - Build with explicit API URL for NodePort-only access: `docker build --build-arg VITE_API_URL=http://localhost:30080 -t amss/frontend:latest ./frontend`
 
 ### Frontend fails with "crypto.randomUUID is not a function"
 
-`crypto.randomUUID()` requires a secure context (HTTPS or localhost). When accessing the frontend via plain HTTP on a non-localhost address (e.g., through agentgateway on `192.168.139.2`), the browser disables the Web Crypto API. The frontend has a Math.random-based fallback UUID generator for this case — this is already fixed in the current code.
+`crypto.randomUUID()` requires a secure context (HTTPS or localhost). The standard port-forward access at `http://localhost:8080` is a secure context, so this does not apply in normal usage. If accessing the frontend via a non-localhost plain-HTTP address, the browser disables the Web Crypto API. The frontend has a Math.random-based fallback UUID generator for this edge case — this is already fixed in the current code.
 
 ### Activity generator gets HTTP 400 on ticket creation
 
