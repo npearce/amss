@@ -471,7 +471,104 @@ Both routes should show `Accepted` and `ResolvedRefs`.
 
 > **Note**: The Solo Enterprise UI is installed in Phase 4 alongside kagent. agentgateway observability features require the management chart which is installed in the `kagent` namespace.
 
-### 3.5 Access the Application
+### 3.5 Configure LLM Egress through agentgateway
+
+Routes agent LLM calls through agentgateway so all AI traffic is visible in the Solo Enterprise UI with observability, guardrails, and failover.
+
+```bash
+# 1. Create Anthropic API key secret for agentgateway
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-secret
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: ${ANTHROPIC_API_KEY}
+EOF
+
+# 2. Create AgentgatewayBackend for Anthropic
+kubectl apply -f - <<EOF
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: "claude-sonnet-4-6"
+  policies:
+    auth:
+      secretRef:
+        name: anthropic-secret
+EOF
+
+# 3. Create HTTPRoute for LLM traffic
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: anthropic
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  rules:
+  - backendRefs:
+    - name: anthropic
+      namespace: agentgateway-system
+      group: agentgateway.dev
+      kind: AgentgatewayBackend
+EOF
+
+# 4. Configure tracing policy for agentgateway
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: agentgateway-to-telemetry
+  namespace: kagent
+spec:
+  from:
+  - group: enterpriseagentgateway.solo.io
+    kind: EnterpriseAgentgatewayPolicy
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: tracing
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: agentgateway-proxy
+  frontend:
+    tracing:
+      backendRef:
+        name: solo-enterprise-telemetry-collector
+        namespace: kagent
+        kind: Service
+        port: 4317
+      randomSampling: "true"
+EOF
+```
+
+Verify the backend and route are accepted:
+```bash
+kubectl get agentgatewaybackend -n agentgateway-system
+kubectl get httproute anthropic -n agentgateway-system
+```
+
+### 3.6 Access the Application
 
 ```bash
 kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
@@ -480,9 +577,9 @@ open http://localhost:8080
 
 On OrbStack the agentgateway proxy LoadBalancer service does not receive an external IP. Port-forwarding is the standard local access method and routes all traffic through agentgateway identically to a production LoadBalancer — the HTTPRoutes, ReferenceGrant, and backend selection all apply exactly the same way.
 
-### 3.6 Verify Full Stack Through agentgateway
+### 3.7 Verify Full Stack Through agentgateway
 
-Port-forward must be running (see §3.5):
+Port-forward must be running (see §3.6):
 
 ```bash
 # BFF health
@@ -505,7 +602,7 @@ curl -s http://localhost:8080/api/v1/tickets | jq '.data.total'
 open http://localhost:8080
 ```
 
-### 3.7 Run Activity Generator via Gateway
+### 3.8 Run Activity Generator via Gateway
 
 ```bash
 cd activity-generator
@@ -584,6 +681,8 @@ providers:
   default: anthropic
   anthropic:
     apiKey: ${ANTHROPIC_API_KEY}
+proxy:
+  url: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:80"
 otel:
   tracing:
     enabled: true
@@ -593,6 +692,8 @@ otel:
         insecure: true
 EOF
 ```
+
+> **proxy.url**: Routes all declarative agent LLM calls through agentgateway. This enables LLM traffic observability (every token, every tool call), guardrails, and failover through the gateway — the key demo moment for the Solo platform.
 
 Install:
 
@@ -615,9 +716,17 @@ Expected pods: `kagent-controller`, `kagent-postgresql`, `kmcp-enterprise-contro
 ### 4.6 Access Solo Enterprise UIs
 
 ```bash
-# kagent + agentgateway UI (management chart is in kagent namespace)
+# AMSS application — through agentgateway
+kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
+open http://localhost:8080
+
+# Solo Enterprise UI — kagent + agentgateway observability dashboard
 kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
 open http://localhost:4000
+
+# kagent A2A endpoint (debug — direct agent invocation without BFF)
+kubectl port-forward svc/kagent-controller -n kagent 8083:8083 &
+# http://localhost:8083/api/a2a/kagent/mission-support-agent/
 ```
 
 ### 4.7 Create ModelConfig
@@ -635,6 +744,18 @@ spec:
   provider: Anthropic
   model: claude-sonnet-4-6
 EOF
+```
+
+If you previously applied this with `kubectl` before Helm managed it, annotate it so Helm can adopt it without conflict:
+
+```bash
+kubectl annotate modelconfig default-model-config -n kagent \
+  meta.helm.sh/release-name=kagent \
+  meta.helm.sh/release-namespace=kagent \
+  --overwrite
+kubectl label modelconfig default-model-config -n kagent \
+  app.kubernetes.io/managed-by=Helm \
+  --overwrite
 ```
 
 ### 4.8 Register MCP Servers as RemoteMCPServer CRDs
@@ -712,7 +833,9 @@ curl --max-time 120 -X POST http://localhost:8083/api/a2a/kagent/mission-support
   }'
 ```
 
-Expected: agent runs `search_kb`, reads KB-001, returns a formatted procedure response with panel locations and valve IDs. Full chain confirmed: user → kagent A2A → Claude Sonnet 4.6 → MCP tools → KB Store → response.
+Expected: agent runs `search_kb`, reads KB-001, returns a formatted procedure response with panel locations and valve IDs. Full chain confirmed: user → kagent A2A → Claude Sonnet 4.6 (via agentgateway egress) → MCP tools → KB Store → response.
+
+After the request completes, open the Solo Enterprise UI (`http://localhost:4000`) and verify traces appear for both the kagent agent invocation and the agentgateway LLM egress call. Every tool execution and token exchange should be visible as spans.
 
 ### 4.11 Enable Live Agent Mode on BFF
 
@@ -723,7 +846,7 @@ kubectl set env deployment/bff -n amss \
   KAGENT_AGENT_NAMESPACE=kagent
 ```
 
-Verify live agent response (port-forward must be running — see §3.5):
+Verify live agent response (port-forward must be running — see §3.6):
 
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/chat \
@@ -876,6 +999,50 @@ Two common causes:
 - **Missing trailing slash**: the A2A URL must end with `/` — `http://localhost:8083/api/a2a/kagent/mission-support-agent/` not without the slash
 - **Wrong message part key**: use `"kind": "text"` not `"type": "text"` in the message parts array
 
+### ModelConfig Helm conflict on upgrade
+
+If you manually applied `ModelConfig` with `kubectl` before Helm manages it, Helm will refuse to upgrade with a conflict error. Annotate and label it so Helm can adopt it:
+
+```bash
+kubectl annotate modelconfig default-model-config -n kagent \
+  meta.helm.sh/release-name=kagent \
+  meta.helm.sh/release-namespace=kagent \
+  --overwrite
+kubectl label modelconfig default-model-config -n kagent \
+  app.kubernetes.io/managed-by=Helm \
+  --overwrite
+```
+
+### agentgateway proxy LoadBalancer stuck in Pending on OrbStack
+
+OrbStack does not provision external IPs for LoadBalancer services. Use `kubectl port-forward` instead — this routes traffic identically to a LoadBalancer, with the same HTTPRoutes and backend selection applying:
+
+```bash
+kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
+```
+
+### No traces visible in Solo Enterprise UI
+
+Check in order:
+1. `EnterpriseAgentgatewayPolicy` tracing resource exists: `kubectl get enterpriseagentgatewaypolicy -n agentgateway-system`
+2. `ReferenceGrant` allows cross-namespace access to the telemetry collector: `kubectl get referencegrant agentgateway-to-telemetry -n kagent`
+3. The KubernetesCluster CR is registered in the management UI — without cluster registration the UI has no context for the incoming traces
+
+### Agent LLM calls not flowing through agentgateway
+
+The `proxy.url` field in `kagent.yaml` must point to the agentgateway proxy service. Verify it is set and then reinstall:
+
+```bash
+grep proxy kagent.yaml
+# Should show: url: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:80"
+
+helm upgrade kagent \
+  oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise \
+  -n kagent --version ${KAGENT_ENT_VERSION} --values kagent.yaml
+```
+
+Without `proxy.url`, agent LLM calls go directly to the Anthropic API and bypass agentgateway entirely — no traces, no guardrails.
+
 ---
 
 ## Version History
@@ -887,3 +1054,4 @@ Two common causes:
 | 2026-05-09 | Phase 3 | Solo Enterprise agentgateway installed. Gateway at `192.168.139.2`. HTTPRoutes: `/api/v1/*` → BFF, `/*` → frontend. ReferenceGrant for cross-namespace access. Solo Enterprise UI at localhost:4000 via port-forward. Frontend `VITE_API_URL` removed from build — SPA uses relative paths that work through the gateway. Fixed `crypto.randomUUID` fallback for plain-HTTP contexts. Fixed activity generator ticket create field names (`category`, `reported_by`, `assigned_to`). |
 | 2026-05-10 | Phase 4 | kagent Enterprise installed in `kagent` namespace with Anthropic provider (claude-sonnet-4-6). ModelConfig, RemoteMCPServer CRDs, and Agent CRDs applied. Both agents (mission-support-agent, kb-curator-agent) show READY: True. Full A2A chain verified: user → kagent → Claude Sonnet 4.6 → MCP tools → KB Store. Management chart moved from `agentgateway-system` to `kagent` namespace. Key gotchas: management chart namespace, `allowedNamespaces.from: All` on RemoteMCPServer, explicit `modelConfig` in agent YAML, trailing slash on A2A URL, `"kind"` not `"type"` in message parts. Remaining: BFF wiring, agentgateway LLM egress, frontend end-to-end. |
 | 2026-05-11 | Phase 4 | BFF wired to kagent A2A endpoint (`a2a.go`, 17 new tests, 480 → 497 total). `STUB_MODE=false` enables real LLM responses. Full end-to-end chain verified: frontend → agentgateway → BFF → kagent A2A → Claude Sonnet 4.6 → MCP tools → KB Store. Runbook cleanup: consolidated management chart install to `kagent` namespace only (removed Phase 3 UI install step), added Access the Application section to Phase 3, added Access Solo Enterprise UIs section to Phase 4, replaced TODO list with completed BFF wiring steps. License keys simplified to two vars: `AGENTGATEWAY_LICENSE_KEY` and `ANTHROPIC_API_KEY`. |
+| 2026-05-12 | Phase 3 | agentgateway LLM egress fully configured: `AgentgatewayBackend` for Anthropic, `HTTPRoute` for LLM traffic, `EnterpriseAgentgatewayPolicy` tracing with OTel collector. `proxy.url` added to `kagent.yaml` so all declarative agent LLM calls route through agentgateway. Both inbound (browser→BFF) and outbound (agent→LLM) traffic now flows through agentgateway with full observability in Solo Enterprise UI — agent invocations, LLM calls, tool executions all visible as traces. Port-forward established as the standard local access method (OrbStack does not provision LoadBalancer IPs). Troubleshooting entries added: ModelConfig Helm conflict, LoadBalancer Pending, missing traces, agent LLM bypass. |
