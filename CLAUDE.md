@@ -337,6 +337,10 @@ amss/
 11. **Wire BFF** — `STUB_MODE=false`, kagent A2A endpoint, `proxy.url` routes agent LLM calls through agentgateway ✅
 12. **Scripts** — setup, teardown, seed, demo
 
+### Phase 4 — Ambient Mesh ✅
+13. **Solo distribution of Istio** — installed in ambient mode (ztunnel DaemonSet at node level, no sidecars), `amss` namespace labeled `istio.io/dataplane-mode=ambient`, east-west mTLS confirmed ✅
+14. **Demo tracks** — 4 tracks documented for different product combinations (agentgateway-only, +kagent, +ambient, full stack) ✅
+
 Each step must have passing tests before moving to the next.
 
 ---

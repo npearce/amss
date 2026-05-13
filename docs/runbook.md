@@ -35,6 +35,7 @@ Contact your Solo account representative to obtain:
 
 ```bash
 export AGENTGATEWAY_LICENSE_KEY=<key>   # Used for agentgateway, kagent, and management chart
+export SOLO_ISTIO_LICENSE_KEY=<key>     # Used for the Solo distribution of Istio (ambient mesh)
 export ANTHROPIC_API_KEY=<key>          # LLM provider for agents
 ```
 
@@ -858,14 +859,216 @@ Expected: a detailed response citing KB-001 with panel locations and valve IDs �
 
 Then open the frontend at `http://localhost:8080` and test chat in the browser.
 
-### 4.12 Remaining Steps (TODO)
+---
 
-- Configure agentgateway egress for LLM traffic (guardrails, model failover)
-- Enable ambient mesh for east-west mTLS observability
+## Phase 5 — Ambient Mesh (Solo Distribution of Istio)
+
+Install the Solo distribution of Istio in ambient mode to add mTLS and L7 observability to all east-west traffic between AMSS services — without sidecars. The ztunnel DaemonSet handles encryption at the node level; pods stay at 1/1 container throughout.
+
+### Prerequisites
+
+- `SOLO_ISTIO_LICENSE_KEY` — obtain from your Solo account representative
+- Phases 2–4 complete (AMSS deployed, agentgateway and kagent installed)
+
+### 5.1 Set Environment Variables
+
+```bash
+export SOLO_ISTIO_LICENSE_KEY=<your-key>
+export ISTIO_VERSION=1.29.1
+export ISTIO_IMAGE=${ISTIO_VERSION}-solo
+export REPO=us-docker.pkg.dev/solo-public/istio-helm
+```
+
+### 5.2 Install Solo Distribution of Istio (Ambient Mode)
+
+Four charts in order: base CRDs, control plane, CNI node agent, ztunnel DaemonSet.
+
+```bash
+# 1. Istio base — CRDs and cluster roles
+helm upgrade -i istio-base \
+  oci://${REPO}/base \
+  --version ${ISTIO_VERSION} \
+  -n istio-system --create-namespace
+
+# 2. Istiod — control plane with ambient profile
+helm upgrade -i istiod \
+  oci://${REPO}/istiod \
+  --version ${ISTIO_VERSION} \
+  -n istio-system \
+  --set profile=ambient \
+  --set-string global.hub="us-docker.pkg.dev/solo-public/istio" \
+  --set-string global.tag="${ISTIO_IMAGE}" \
+  --set-string licenseKey=${SOLO_ISTIO_LICENSE_KEY} \
+  --wait
+
+# 3. Istio CNI — node-level network programming (no sidecars)
+helm upgrade -i istio-cni \
+  oci://${REPO}/cni \
+  --version ${ISTIO_VERSION} \
+  -n istio-system \
+  --set profile=ambient \
+  --set-string global.hub="us-docker.pkg.dev/solo-public/istio" \
+  --set-string global.tag="${ISTIO_IMAGE}"
+
+# 4. ztunnel — per-node L4 proxy DaemonSet (handles mTLS)
+helm upgrade -i ztunnel \
+  oci://${REPO}/ztunnel \
+  --version ${ISTIO_VERSION} \
+  -n istio-system \
+  --set-string global.hub="us-docker.pkg.dev/solo-public/istio" \
+  --set-string global.tag="${ISTIO_IMAGE}"
+```
+
+Verify control plane and node agents are running:
+
+```bash
+kubectl get pods -n istio-system
+```
+
+Expected: `istiod` running, `istio-cni-node` DaemonSet pod on each node, `ztunnel` DaemonSet pod on each node.
+
+### 5.3 Enroll the amss Namespace
+
+Label the namespace so ztunnel intercepts all traffic:
+
+```bash
+kubectl label namespace amss istio.io/dataplane-mode=ambient
+```
+
+Verify the label is set:
+
+```bash
+kubectl get namespace amss --show-labels
+```
+
+### 5.4 Verify
+
+**Pods stay at 1/1 — no sidecars injected:**
+
+```bash
+kubectl get pods -n amss
+```
+
+All pods should remain `1/1 Running`. Ambient mode uses the ztunnel DaemonSet at the node level — no containers are added to application pods.
+
+**Application still works through agentgateway:**
+
+```bash
+curl -s http://localhost:8080/health
+# {"data":{"status":"ok","service":"bff"},"error":null}
+
+curl -s http://localhost:8080/api/v1/crew | jq '.data.total'
+# 20
+
+curl -s -X POST http://localhost:8080/api/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"crew_id":"wiseman-r","session_id":"test-1","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
+  | jq '.data.response'
+```
+
+**mTLS is active — observe it in the Solo Enterprise UI:**
+
+```bash
+kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
+open http://localhost:4000
+```
+
+Navigate to the mesh observability view to see the service graph with mTLS indicators. All `amss` namespace traffic (BFF → stores, MCP servers → stores) is now encrypted at the node level by ztunnel.
+
+> **Ambient mesh transparency**: The application code is unchanged. No sidecars, no certificates managed by workloads, no port-forward changes. ztunnel handles the L4 encryption transparently. The Solo Enterprise UI shows the service topology and confirms mTLS is enforced on all east-west paths.
+
+---
+
+## Demo Tracks
+
+Four demo tracks using the same port-forwards: `kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &` and `kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &`.
+
+### Track 1 — agentgateway Only (Phases 2–3)
+
+Focus: AI-native gateway, HTTPRoute-based routing, stub chat.
+
+**What to show:**
+1. `open http://localhost:8080` — full frontend loads, user switcher works
+2. Select an astronaut, send a chat message — stub response cites KB articles
+3. Solo Enterprise UI at `http://localhost:4000` — gateway observability dashboard, request counts, latency
+
+**Curl demo:**
+```bash
+curl -s http://localhost:8080/api/v1/chat \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"crew_id":"wiseman-r","session_id":"demo-1","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
+  | jq '.data'
+```
+
+### Track 2 — agentgateway + kagent (Phases 2–4)
+
+Focus: Real AI agents, A2A protocol, tool use via MCP, end-to-end traces.
+
+**What to show:**
+1. Open Solo Enterprise UI `http://localhost:4000` — agents panel, both agents READY
+2. Open frontend `http://localhost:8080`, send a chat — this hits kagent via A2A
+3. Switch back to UI — show the trace: kagent invocation → LLM call (via agentgateway egress) → tool calls (search_kb, read_kb_article) → response
+4. Discuss: every token, every tool call visible; agentgateway is the egress for LLM traffic
+
+**Direct A2A curl (bypass BFF):**
+```bash
+kubectl port-forward svc/kagent-controller -n kagent 8083:8083 &
+curl --max-time 120 -X POST http://localhost:8083/api/a2a/kagent/mission-support-agent/ \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"message/send","id":"demo-1","params":{"message":{"role":"user","parts":[{"kind":"text","text":"What is the WCS flush procedure?"}]}}}'
+```
+
+### Track 3 — agentgateway + Ambient Mesh (Phases 2–3, 5)
+
+Focus: Zero-trust east-west mTLS without sidecars, service mesh observability.
+
+**What to show:**
+1. `kubectl get pods -n amss` — all 1/1, no sidecars
+2. `kubectl get namespace amss --show-labels` — `istio.io/dataplane-mode=ambient` set
+3. Solo Enterprise UI — mesh observability view, service graph for `amss` namespace, mTLS badges on every edge
+4. Make a request, watch the graph light up — BFF → kb-store, ticket-store, crew-store all mTLS encrypted
+
+**Talking point**: "The application code is completely unchanged. No certificate rotation code, no sidecar lifecycle management. ztunnel handles it at the node level."
+
+### Track 4 — Full Stack (Phases 2–5)
+
+Full demo: all products, all traffic encrypted, all calls traced.
+
+**Setup:**
+```bash
+kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
+kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
+```
+
+**Demo flow:**
+1. Open frontend `http://localhost:8080` — switch to astronaut Reid Wiseman
+2. Send chat: "WCS pressure is dropping, what do I do?" — real Claude Sonnet 4.6 response
+3. Switch to Solo Enterprise UI `http://localhost:4000`:
+   - **Gateway view**: inbound request trace (browser → agentgateway → BFF)
+   - **Agents view**: kagent invocation span, tool calls, LLM egress calls
+   - **Mesh view**: service graph with mTLS on all amss east-west edges
+4. Ask the curator: `curl -s -X POST http://localhost:8080/api/v1/curator -d '{}' -H 'Content-Type: application/json' | jq '.data'` — KB deduplication report
+5. Run activity generator for 2 minutes: `BFF_URL=http://localhost:8080 go run ./activity-generator/.` — watch the service graph fill with traffic
 
 ---
 
 ## Teardown
+
+### Remove Ambient Mesh (Phase 5 — if installed)
+
+Remove the namespace label first, then uninstall in reverse install order:
+
+```bash
+# Remove namespace enrollment
+kubectl label namespace amss istio.io/dataplane-mode-
+
+# Uninstall Istio components (reverse order)
+helm uninstall ztunnel -n istio-system
+helm uninstall istio-cni -n istio-system
+helm uninstall istiod -n istio-system
+helm uninstall istio-base -n istio-system
+kubectl delete namespace istio-system
+```
 
 ### Remove AMSS Application
 
@@ -1043,6 +1246,56 @@ helm upgrade kagent \
 
 Without `proxy.url`, agent LLM calls go directly to the Anthropic API and bypass agentgateway entirely — no traces, no guardrails.
 
+### istio-cni-node pod stuck at 0/1 Ready
+
+The `istio-cni-node` DaemonSet pod may stay `0/1` if the CNI plugin directory is not writable on the node. On OrbStack this typically resolves within 60 seconds as OrbStack provisions the node directory. Check:
+
+```bash
+kubectl describe pod -l k8s-app=istio-cni-node -n istio-system
+```
+
+If the pod reports `FailedMount` or a permission error on `/opt/cni/bin`, restart the OrbStack k8s node via the OrbStack app UI (Kubernetes → Restart). The CNI DaemonSet will retry on node restart.
+
+### Application stops working after labeling the amss namespace
+
+If pods restart and fail after `kubectl label namespace amss istio.io/dataplane-mode=ambient`, ztunnel may not be ready yet. Check:
+
+```bash
+kubectl get pods -n istio-system -l app=ztunnel
+kubectl get pods -n amss
+```
+
+If ztunnel pods are not Running, wait for them before labeling. If pods in `amss` are crashing, check that ztunnel has enrolled them:
+
+```bash
+kubectl logs -l app=ztunnel -n istio-system --tail=20
+```
+
+Remove the label, let pods stabilize, then re-apply once ztunnel is fully ready:
+
+```bash
+kubectl label namespace amss istio.io/dataplane-mode-
+# wait for ztunnel to be ready
+kubectl label namespace amss istio.io/dataplane-mode=ambient
+```
+
+### Ambient mesh shows traffic but mTLS is not confirmed
+
+In the Solo Enterprise UI mesh view, mTLS indicators appear only after traffic flows through ztunnel. Send a few requests to generate telemetry:
+
+```bash
+for i in $(seq 1 5); do curl -s http://localhost:8080/api/v1/crew | jq '.data.total'; done
+```
+
+Then refresh the Solo Enterprise UI. If mTLS still does not appear, verify ztunnel is running on the same node as the `amss` pods:
+
+```bash
+kubectl get pods -n istio-system -o wide | grep ztunnel
+kubectl get pods -n amss -o wide
+```
+
+The ztunnel pod and the amss pods must share the same node for mTLS to be active on their traffic.
+
 ---
 
 ## Version History
@@ -1055,3 +1308,4 @@ Without `proxy.url`, agent LLM calls go directly to the Anthropic API and bypass
 | 2026-05-10 | Phase 4 | kagent Enterprise installed in `kagent` namespace with Anthropic provider (claude-sonnet-4-6). ModelConfig, RemoteMCPServer CRDs, and Agent CRDs applied. Both agents (mission-support-agent, kb-curator-agent) show READY: True. Full A2A chain verified: user → kagent → Claude Sonnet 4.6 → MCP tools → KB Store. Management chart moved from `agentgateway-system` to `kagent` namespace. Key gotchas: management chart namespace, `allowedNamespaces.from: All` on RemoteMCPServer, explicit `modelConfig` in agent YAML, trailing slash on A2A URL, `"kind"` not `"type"` in message parts. Remaining: BFF wiring, agentgateway LLM egress, frontend end-to-end. |
 | 2026-05-11 | Phase 4 | BFF wired to kagent A2A endpoint (`a2a.go`, 17 new tests, 480 → 497 total). `STUB_MODE=false` enables real LLM responses. Full end-to-end chain verified: frontend → agentgateway → BFF → kagent A2A → Claude Sonnet 4.6 → MCP tools → KB Store. Runbook cleanup: consolidated management chart install to `kagent` namespace only (removed Phase 3 UI install step), added Access the Application section to Phase 3, added Access Solo Enterprise UIs section to Phase 4, replaced TODO list with completed BFF wiring steps. License keys simplified to two vars: `AGENTGATEWAY_LICENSE_KEY` and `ANTHROPIC_API_KEY`. |
 | 2026-05-12 | Phase 3 | agentgateway LLM egress fully configured: `AgentgatewayBackend` for Anthropic, `HTTPRoute` for LLM traffic, `EnterpriseAgentgatewayPolicy` tracing with OTel collector. `proxy.url` added to `kagent.yaml` so all declarative agent LLM calls route through agentgateway. Both inbound (browser→BFF) and outbound (agent→LLM) traffic now flows through agentgateway with full observability in Solo Enterprise UI — agent invocations, LLM calls, tool executions all visible as traces. Port-forward established as the standard local access method (OrbStack does not provision LoadBalancer IPs). Troubleshooting entries added: ModelConfig Helm conflict, LoadBalancer Pending, missing traces, agent LLM bypass. |
+| 2026-05-12 | Phase 5 | Solo distribution of Istio 1.29.1 installed in ambient mode (no sidecars). Four Helm charts: `istio-base`, `istiod`, `istio-cni`, `ztunnel`. `amss` namespace labeled `istio.io/dataplane-mode=ambient` — all east-west traffic (BFF→stores, MCP→stores) now mTLS-encrypted by ztunnel at node level. App pods remain 1/1. mTLS confirmed in Solo Enterprise UI mesh view. Four demo tracks documented covering every product combination from agentgateway-only through full stack. Prerequisites updated (`SOLO_ISTIO_LICENSE_KEY`), teardown updated with Istio uninstall steps, troubleshooting entries added: istio-cni-node NotReady, post-label pod crashes, mTLS not visible in UI. |
