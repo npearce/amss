@@ -135,7 +135,7 @@ Each Go service has a Dockerfile with multi-stage build (build stage + scratch/d
 Activity Generator / UIs
         │
         ▼
-  Solo Enterprise for agentgateway (ingress)
+  Solo Enterprise for agentgateway (ingress, port-forward :8080)
         │
         ▼
       BFF API ──────────────────────┐
@@ -148,7 +148,7 @@ Activity Generator / UIs
   Solo Enterprise for agentgateway (egress — LLM traffic)
         │                           │
         ▼                           ▼
-   LLM providers             LLM providers
+   Anthropic API             Anthropic API
         │                           │
    ┌────┴────┐                 ┌────┴────┐
    ▼         ▼                 ▼         ▼
@@ -325,16 +325,16 @@ amss/
 ### Phase 2 — Application Layer
 2. **MCP servers** (kb-mcp, ticket-mcp) — scaffolded with `kmcp`, wrap store APIs as MCP tools ✅
 3. **BFF** — proxies stores, stubs agent responses when kagent unavailable ✅
-4. **Frontend** — React + Vite, user switcher, astronaut chat + ground control views
-5. **Activity generator** — placeholder scenarios (create/close ticket, create/archive KB)
-6. **k8s manifests** — deploy stores, MCP servers, BFF, frontend to OrbStack/kind (agents stubbed)
+4. **Frontend** — React + Vite, user switcher, astronaut chat + ground control views ✅
+5. **Activity generator** — 6 narrative scenarios, humanized 22-minute cycles, graceful shutdown ✅
+6. **k8s manifests** — deploy stores, MCP servers, BFF, frontend to OrbStack/kind (agents stubbed) ✅
 
 ### Phase 3 — Solo Enterprise Integration (k8s)
-7. **Solo Enterprise for kagent** — install on OrbStack, deploy Agent CRDs (declarative YAML)
-8. **Solo Enterprise for agentgateway** — LLM routing, guardrails, failover
-9. **MCP server deployment** — `kmcp deploy` to create `MCPServer` CRDs
-10. **Agent CRDs** — mission-support-agent and kb-curator-agent as `Agent` resources
-11. **Wire BFF** — connect to kagent agent endpoints instead of stubs
+7. **Solo Enterprise for kagent** — install on OrbStack, deploy Agent CRDs (declarative YAML) ✅
+8. **Solo Enterprise for agentgateway** — ingress + LLM egress via `AgentgatewayBackend`, tracing policy ✅
+9. **MCP server deployment** — `RemoteMCPServer` CRDs applied in `amss` namespace ✅
+10. **Agent CRDs** — mission-support-agent and kb-curator-agent as `Agent` resources ✅
+11. **Wire BFF** — `STUB_MODE=false`, kagent A2A endpoint, `proxy.url` routes agent LLM calls through agentgateway ✅
 12. **Scripts** — setup, teardown, seed, demo
 
 Each step must have passing tests before moving to the next.
