@@ -143,9 +143,11 @@ Activity Generator / UIs
         ▼                           ▼
   Mission Support Agent      KB Curator Agent
   (kagent Agent CRD)         (kagent Agent CRD)
+  [speaks OpenAI format]     [speaks OpenAI format]
         │                           │
         ▼                           ▼
-  Solo Enterprise for agentgateway (egress — LLM traffic)
+  Solo Enterprise for agentgateway (egress)
+  [translates OpenAI → Anthropic, injects API key, TLS origination]
         │                           │
         ▼                           ▼
    Anthropic API             Anthropic API
@@ -160,7 +162,7 @@ KB Store  Ticket Store       KB Store  Ticket Store
          Crew Store (BFF direct access)
 ```
 
-All east-west traffic (agents ↔ MCP servers ↔ stores) runs on the Solo distribution of Istio in ambient mode — mTLS and L7 observability with no sidecars. agentgateway is deployed as a waypoint proxy in the mesh.
+East-west traffic within the `amss` namespace (BFF ↔ stores, MCP servers ↔ stores) runs on the Solo distribution of Istio in ambient mode — mTLS with no sidecars. The `kagent` and `agentgateway-system` namespaces are intentionally excluded from the mesh: agents need direct outbound HTTPS to the Anthropic API, and agentgateway manages its own TLS for ingress and LLM egress.
 
 ### Solo.io Product Demo Coverage
 
@@ -168,7 +170,7 @@ All east-west traffic (agents ↔ MCP servers ↔ stores) runs on the Solo distr
 |---|---|
 | Solo Enterprise for kagent | Both agents as `Agent` CRDs, declarative config, management UI, observability, tracing |
 | Solo Enterprise for agentgateway | Ingress (user→BFF), Egress (agent→LLM), guardrails, model failover, content-based routing |
-| Solo distribution of Istio (ambient) | mTLS + L7 observability on all east-west traffic, no sidecars, policy enforcement |
+| Solo distribution of Istio (ambient) | mTLS on `amss` east-west traffic (stores ↔ BFF ↔ MCP servers), no sidecars; `kagent` and `agentgateway-system` excluded for LLM egress compatibility |
 
 ---
 
@@ -336,6 +338,10 @@ amss/
 10. **Agent CRDs** — mission-support-agent and kb-curator-agent as `Agent` resources ✅
 11. **Wire BFF** — `STUB_MODE=false`, kagent A2A endpoint, `proxy.url` routes agent LLM calls through agentgateway ✅
 12. **Scripts** — setup, teardown, seed, demo
+
+### Phase 4 — Ambient Mesh ✅
+13. **Solo distribution of Istio** — installed in ambient mode (ztunnel DaemonSet at node level, no sidecars), `amss` namespace labeled `istio.io/dataplane-mode=ambient`, east-west mTLS confirmed ✅
+14. **Demo tracks** — 4 tracks documented for different product combinations (agentgateway-only, +kagent, +ambient, full stack) ✅
 
 Each step must have passing tests before moving to the next.
 
