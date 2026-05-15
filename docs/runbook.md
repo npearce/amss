@@ -489,9 +489,9 @@ stringData:
   Authorization: ${ANTHROPIC_API_KEY}
 EOF
 
-# 2. Create AgentgatewayBackend — static TLS proxy to api.anthropic.com
-# The agent sends its own API key in the Authorization header; agentgateway
-# handles TLS origination and routes to the real Anthropic endpoint.
+# 2. Create AgentgatewayBackend — AI backend with Anthropic provider.
+# agentgateway translates incoming OpenAI-format requests to Anthropic native
+# format and injects the real API key from anthropic-secret.
 kubectl apply -f - <<EOF
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -499,14 +499,17 @@ metadata:
   name: anthropic
   namespace: agentgateway-system
 spec:
-  static:
-    host: api.anthropic.com
-    port: 443
+  ai:
+    provider:
+      anthropic:
+        model: "claude-sonnet-4-6"
   policies:
-    tls: {}
+    auth:
+      secretRef:
+        name: anthropic-secret
 EOF
 
-# 3. Create HTTPRoute for LLM traffic — matches /v1/messages only
+# 3. Create HTTPRoute for LLM traffic — matches /anthropic path prefix
 kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -521,7 +524,7 @@ spec:
   - matches:
     - path:
         type: PathPrefix
-        value: /v1/messages
+        value: /anthropic
     backendRefs:
     - name: anthropic
       namespace: agentgateway-system
@@ -733,9 +736,31 @@ kubectl port-forward svc/kagent-controller -n kagent 8083:8083 &
 
 ### 4.7 Create ModelConfig
 
-The `provider` field is case-sensitive (`Anthropic` not `anthropic`). The `anthropic.baseUrl` field routes LLM calls through the agentgateway proxy so all traffic is observable in the Solo Enterprise UI.
+The ModelConfig uses `provider: OpenAI` even though the actual LLM is Claude Sonnet 4.6. This is intentional — kagent speaks OpenAI format and routes calls to agentgateway's `/anthropic` path, where agentgateway translates the request to Anthropic native format, injects the real API key from `anthropic-secret`, and forwards to `api.anthropic.com`.
 
-The kagent Helm chart creates its own `default-model-config` without `anthropic.baseUrl`. Delete it first to avoid a field ownership conflict, then apply the correct config:
+**Why OpenAI format?** The direct Anthropic AI backend has a known bug ([agentgateway-enterprise#520](https://github.com/solo-io/enterprise-agentgateway/issues/520)) where Anthropic-native tool definitions are rejected. The OpenAI→Anthropic translation path in agentgateway works around this.
+
+**What this gives you:**
+- Full LLM observability: token counts, latency, model info in the Solo Enterprise UI
+- Centralized API key management in agentgateway (agents never hold the key)
+- Provider switching: change one `AgentgatewayBackend` CRD to switch from Anthropic to any other provider — zero agent changes
+
+First create the dummy OpenAI key secret (kagent's SDK requires a key for initialization; it's never sent to a real OpenAI endpoint):
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kagent-openai-dummy
+  namespace: kagent
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "sk-dummy-not-used-agentgateway-handles-auth"
+EOF
+```
+
+Then delete the Helm-managed ModelConfig and apply the correct one:
 
 ```bash
 kubectl delete modelconfig default-model-config -n kagent 2>/dev/null || true
@@ -747,16 +772,14 @@ metadata:
   name: default-model-config
   namespace: kagent
 spec:
-  provider: Anthropic
+  provider: OpenAI
   model: claude-sonnet-4-6
-  apiKeySecret: kagent-anthropic
-  apiKeySecretKey: ANTHROPIC_API_KEY
-  anthropic:
-    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
+  apiKeySecret: kagent-openai-dummy
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/anthropic
 EOF
 ```
-
-`apiKeySecret` and `apiKeySecretKey` reference the secret created by the kagent Helm chart when `providers.anthropic.apiKey` is set in the values — the chart stores the key under `ANTHROPIC_API_KEY` in the `kagent-anthropic` secret. `anthropic.baseUrl` routes LLM calls through the agentgateway proxy for observability.
 
 ### 4.8 Register MCP Servers as RemoteMCPServer CRDs
 
@@ -1056,6 +1079,8 @@ kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
 4. Ask the curator: `curl -s -X POST http://localhost:8080/api/v1/curator -d '{}' -H 'Content-Type: application/json' | jq '.data'` — KB deduplication report
 5. Run activity generator for 2 minutes: `BFF_URL=http://localhost:8080 go run ./activity-generator/.` — watch the service graph fill with traffic
 
+**Provider switching talking point**: "Want to switch from Anthropic to OpenAI? Change one `AgentgatewayBackend` CRD. The agents keep using OpenAI format — which they're already doing. Zero code changes, zero agent reconfiguration. The gateway absorbs the provider difference."
+
 ---
 
 ## Teardown
@@ -1247,39 +1272,44 @@ Check in order:
 
 ### Agent LLM calls not flowing through agentgateway
 
-LLM egress is routed via `anthropic.baseUrl` in the `ModelConfig`, not via `proxy.url` in kagent.yaml (`proxy.url` routes MCP connections and breaks them — do not use it). Verify the ModelConfig has the correct baseUrl:
+LLM egress is routed via `openAI.baseUrl` in the `ModelConfig` (pointing at the agentgateway `/anthropic` path). Verify:
 
 ```bash
-kubectl get modelconfig default-model-config -n kagent -o yaml | grep baseUrl
-# Should show: baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
+kubectl get modelconfig default-model-config -n kagent -o yaml | grep -A2 openAI
+# Should show: baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/anthropic
 ```
 
-If missing, delete and re-apply:
-
-```bash
-kubectl delete modelconfig default-model-config -n kagent
-kubectl apply -f - <<EOF
-apiVersion: kagent.dev/v1alpha2
-kind: ModelConfig
-metadata:
-  name: default-model-config
-  namespace: kagent
-spec:
-  provider: Anthropic
-  model: claude-sonnet-4-6
-  apiKeySecret: kagent-anthropic
-  apiKeySecretKey: ANTHROPIC_API_KEY
-  anthropic:
-    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
-EOF
-```
-
-Then restart the agents to pick up the change:
+If missing or incorrect, delete and re-apply (see §4.7 for the full ModelConfig spec). Then restart the agents:
 
 ```bash
 kubectl delete agents --all -n kagent
 kubectl apply -f agents/mission-support-agent/agent.yaml
 kubectl apply -f agents/kb-curator-agent/agent.yaml
+```
+
+### agentgateway AI backend "missing field" or tool definition rejected (agentgateway-enterprise#520)
+
+Known bug: the direct Anthropic AI backend rejects Anthropic-native tool definitions with a field validation error. Workaround: configure the `ModelConfig` with `provider: OpenAI` and `openAI.baseUrl` pointing at agentgateway's `/anthropic` path. agentgateway translates the OpenAI-format request (including tool definitions) to Anthropic native format before forwarding. This is the default configuration in setup.sh.
+
+### proxy.url in kagent values causes MCP 405 errors
+
+`proxy.url` routes all kagent traffic — including MCP connections — through agentgateway. agentgateway does not understand the MCP protocol and returns 405. Do not set `proxy.url` in kagent.yaml. LLM egress routing is handled by `openAI.baseUrl` in the `ModelConfig` instead.
+
+### Ambient mesh on kagent namespace causes LLM call timeouts
+
+If you label the `kagent` namespace with `istio.io/dataplane-mode=ambient`, ztunnel intercepts outbound HTTPS connections to `api.anthropic.com` and they fail with a timeout. Only the `amss` namespace should be enrolled. Remove the label:
+
+```bash
+kubectl label namespace kagent istio.io/dataplane-mode-
+kubectl rollout restart deployment/kagent-controller -n kagent
+```
+
+### AuthorizationPolicy breaks cross-namespace traffic
+
+Any `AuthorizationPolicy` with `action: ALLOW` in the `amss` namespace switches Istio to deny-by-default for that namespace. All traffic not explicitly covered by an ALLOW policy is rejected — including cross-namespace calls. Do not create any `AuthorizationPolicy` resources. mTLS-only posture (no policies) provides strong encryption with allow-all behaviour. If you accidentally created one:
+
+```bash
+kubectl delete authorizationpolicy --all -n amss
 ```
 
 ### istio-cni-node pod stuck at 0/1 Ready

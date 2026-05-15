@@ -299,6 +299,24 @@ echo "  amss namespace enrolled (kagent and agentgateway-system intentionally ex
 echo ""
 echo "==> Step 10: Configuring LLM egress through agentgateway..."
 
+# LLM Egress Architecture:
+# - kagent agents speak OpenAI format (provider: OpenAI in ModelConfig)
+# - Requests route to agentgateway via ModelConfig openAI.baseUrl (/anthropic path)
+# - agentgateway translates OpenAI format → Anthropic native format
+# - agentgateway injects the real Anthropic API key from its own secret
+# - agentgateway forwards to api.anthropic.com with TLS
+# - agentgateway parses Anthropic responses for token usage metrics
+#
+# This approach:
+# 1. Gives full LLM observability (token counts, latency) in agentgateway UI
+# 2. Centralizes API key management in agentgateway
+# 3. Enables provider switching by changing one AgentgatewayBackend — zero agent changes
+#
+# Note: Direct Anthropic AI backend has a known bug (agentgateway-enterprise#520)
+# where Anthropic-native tool definitions are rejected. The OpenAI→Anthropic
+# translation path works around this.
+
+# 1. Anthropic API key secret — agentgateway uses this for auth injection
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Secret
@@ -310,6 +328,7 @@ stringData:
   Authorization: ${ANTHROPIC_API_KEY}
 EOF
 
+# 2. AI backend — agentgateway translates OpenAI→Anthropic and injects the API key
 kubectl apply -f - <<'EOF'
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -317,13 +336,17 @@ metadata:
   name: anthropic
   namespace: agentgateway-system
 spec:
-  static:
-    host: api.anthropic.com
-    port: 443
+  ai:
+    provider:
+      anthropic:
+        model: "claude-sonnet-4-6"
   policies:
-    tls: {}
+    auth:
+      secretRef:
+        name: anthropic-secret
 EOF
 
+# 3. HTTPRoute — /anthropic path prefix for LLM traffic
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -338,12 +361,26 @@ spec:
   - matches:
     - path:
         type: PathPrefix
-        value: /v1/messages
+        value: /anthropic
     backendRefs:
     - name: anthropic
       namespace: agentgateway-system
       group: agentgateway.dev
       kind: AgentgatewayBackend
+EOF
+
+# 4. Dummy OpenAI key — kagent's SDK requires a key for initialization even
+#    though agentgateway handles the real auth. The ModelConfig points at
+#    agentgateway, so this key is never sent to a real OpenAI endpoint.
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kagent-openai-dummy
+  namespace: kagent
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "sk-dummy-not-used-agentgateway-handles-auth"
 EOF
 
 echo "  LLM egress configured."
@@ -412,6 +449,9 @@ echo "==> Step 13: Creating ModelConfig, RemoteMCPServers, and Agent CRDs..."
 echo "  Removing Helm-managed ModelConfig to avoid field ownership conflict..."
 kubectl delete modelconfig default-model-config -n kagent 2>/dev/null || true
 
+# ModelConfig uses OpenAI provider pointing at agentgateway's /anthropic path.
+# agentgateway translates the OpenAI request format to Anthropic native format
+# and injects the real API key. Workaround for agentgateway-enterprise#520.
 kubectl apply -f - <<'EOF'
 apiVersion: kagent.dev/v1alpha2
 kind: ModelConfig
@@ -419,12 +459,12 @@ metadata:
   name: default-model-config
   namespace: kagent
 spec:
-  provider: Anthropic
+  provider: OpenAI
   model: claude-sonnet-4-6
-  apiKeySecret: kagent-anthropic
-  apiKeySecretKey: ANTHROPIC_API_KEY
-  anthropic:
-    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
+  apiKeySecret: kagent-openai-dummy
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/anthropic
 EOF
 
 kubectl apply -f - <<'EOF'

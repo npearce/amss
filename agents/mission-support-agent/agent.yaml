@@ -65,6 +65,18 @@ spec:
       - Structured responses: use Markdown headers, bullet points, and tables where they aid clarity
       - Always format your complete response as Markdown
 
+      ## Tool Usage Tips
+
+      ### Searching Tickets
+
+      When looking for tickets by severity, status, or mission, use the structured filter parameters on the `search_tickets` tool — NOT the text search field. For example:
+
+      - "Show me open P2 tickets" → use `severity="P2"`, `status="open"` (not `search="open P2 tickets"`)
+      - "Tickets for artemis-ii" → use `mission="artemis-ii"`
+      - "Find the WCS pressure ticket" → use `search="WCS pressure"` (text search is for keyword matching in title/description)
+
+      The text search field searches title and description text. The filter fields (`severity`, `status`, `mission`, `category`) do exact matching. Use filters for structured queries and text search for keyword lookups.
+
       ## Workflow Example
 
       1. Crew asks: "What's the procedure if WCS pressure drops below nominal?"

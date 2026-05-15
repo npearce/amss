@@ -143,9 +143,11 @@ Activity Generator / UIs
         ▼                           ▼
   Mission Support Agent      KB Curator Agent
   (kagent Agent CRD)         (kagent Agent CRD)
+  [speaks OpenAI format]     [speaks OpenAI format]
         │                           │
         ▼                           ▼
-  Solo Enterprise for agentgateway (egress — LLM traffic)
+  Solo Enterprise for agentgateway (egress)
+  [translates OpenAI → Anthropic, injects API key, TLS origination]
         │                           │
         ▼                           ▼
    Anthropic API             Anthropic API
