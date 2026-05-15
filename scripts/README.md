@@ -55,6 +55,14 @@ Removes everything in reverse install order: ambient mesh label → amss namespa
 
 Uses `|| true` on all uninstalls — safe to run even if only a subset of the stack was installed.
 
+### demo-stop.sh — Stop a running demo
+
+```bash
+./scripts/demo-stop.sh
+```
+
+Stops the activity generator and all port-forwards without touching the cluster. Use this to cleanly end a demo between tracks or before handing off the machine. The lab environment (k8s deployments, Solo products) remains fully intact.
+
 ### demo-track1.sh — agentgateway only
 
 **Audience**: Platform engineers, networking/security teams evaluating AI gateway capabilities.

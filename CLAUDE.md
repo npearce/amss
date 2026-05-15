@@ -160,7 +160,7 @@ KB Store  Ticket Store       KB Store  Ticket Store
          Crew Store (BFF direct access)
 ```
 
-All east-west traffic (agents ↔ MCP servers ↔ stores) runs on the Solo distribution of Istio in ambient mode — mTLS and L7 observability with no sidecars. agentgateway is deployed as a waypoint proxy in the mesh.
+East-west traffic within the `amss` namespace (BFF ↔ stores, MCP servers ↔ stores) runs on the Solo distribution of Istio in ambient mode — mTLS with no sidecars. The `kagent` and `agentgateway-system` namespaces are intentionally excluded from the mesh: agents need direct outbound HTTPS to the Anthropic API, and agentgateway manages its own TLS for ingress and LLM egress.
 
 ### Solo.io Product Demo Coverage
 
@@ -168,7 +168,7 @@ All east-west traffic (agents ↔ MCP servers ↔ stores) runs on the Solo distr
 |---|---|
 | Solo Enterprise for kagent | Both agents as `Agent` CRDs, declarative config, management UI, observability, tracing |
 | Solo Enterprise for agentgateway | Ingress (user→BFF), Egress (agent→LLM), guardrails, model failover, content-based routing |
-| Solo distribution of Istio (ambient) | mTLS + L7 observability on all east-west traffic, no sidecars, policy enforcement |
+| Solo distribution of Istio (ambient) | mTLS on `amss` east-west traffic (stores ↔ BFF ↔ MCP servers), no sidecars; `kagent` and `agentgateway-system` excluded for LLM egress compatibility |
 
 ---
 

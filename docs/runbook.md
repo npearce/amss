@@ -489,7 +489,9 @@ stringData:
   Authorization: ${ANTHROPIC_API_KEY}
 EOF
 
-# 2. Create AgentgatewayBackend for Anthropic
+# 2. Create AgentgatewayBackend — static TLS proxy to api.anthropic.com
+# The agent sends its own API key in the Authorization header; agentgateway
+# handles TLS origination and routes to the real Anthropic endpoint.
 kubectl apply -f - <<EOF
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -497,17 +499,14 @@ metadata:
   name: anthropic
   namespace: agentgateway-system
 spec:
-  ai:
-    provider:
-      anthropic:
-        model: "claude-sonnet-4-6"
+  static:
+    host: api.anthropic.com
+    port: 443
   policies:
-    auth:
-      secretRef:
-        name: anthropic-secret
+    tls: {}
 EOF
 
-# 3. Create HTTPRoute for LLM traffic
+# 3. Create HTTPRoute for LLM traffic — matches /v1/messages only
 kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -519,7 +518,11 @@ spec:
   - name: agentgateway-proxy
     namespace: agentgateway-system
   rules:
-  - backendRefs:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/messages
+    backendRefs:
     - name: anthropic
       namespace: agentgateway-system
       group: agentgateway.dev
@@ -682,8 +685,6 @@ providers:
   default: anthropic
   anthropic:
     apiKey: ${ANTHROPIC_API_KEY}
-proxy:
-  url: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:80"
 otel:
   tracing:
     enabled: true
@@ -694,7 +695,7 @@ otel:
 EOF
 ```
 
-> **proxy.url**: Routes all declarative agent LLM calls through agentgateway. This enables LLM traffic observability (every token, every tool call), guardrails, and failover through the gateway — the key demo moment for the Solo platform.
+> **Note**: `proxy.url` is intentionally omitted. That setting routes MCP connections through agentgateway, which breaks them. LLM egress is routed through the gateway via `anthropic.baseUrl` in the ModelConfig instead (see §4.7).
 
 Install:
 
@@ -732,9 +733,13 @@ kubectl port-forward svc/kagent-controller -n kagent 8083:8083 &
 
 ### 4.7 Create ModelConfig
 
-The `provider` field is case-sensitive — must be `Anthropic` not `anthropic`:
+The `provider` field is case-sensitive (`Anthropic` not `anthropic`). The `anthropic.baseUrl` field routes LLM calls through the agentgateway proxy so all traffic is observable in the Solo Enterprise UI.
+
+The kagent Helm chart creates its own `default-model-config` without `anthropic.baseUrl`. Delete it first to avoid a field ownership conflict, then apply the correct config:
 
 ```bash
+kubectl delete modelconfig default-model-config -n kagent 2>/dev/null || true
+
 kubectl apply -f - <<EOF
 apiVersion: kagent.dev/v1alpha2
 kind: ModelConfig
@@ -744,20 +749,14 @@ metadata:
 spec:
   provider: Anthropic
   model: claude-sonnet-4-6
+  apiKeySecret: kagent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
 EOF
 ```
 
-If you previously applied this with `kubectl` before Helm managed it, annotate it so Helm can adopt it without conflict:
-
-```bash
-kubectl annotate modelconfig default-model-config -n kagent \
-  meta.helm.sh/release-name=kagent \
-  meta.helm.sh/release-namespace=kagent \
-  --overwrite
-kubectl label modelconfig default-model-config -n kagent \
-  app.kubernetes.io/managed-by=Helm \
-  --overwrite
-```
+`apiKeySecret` and `apiKeySecretKey` reference the secret created by the kagent Helm chart when `providers.anthropic.apiKey` is set in the values — the chart stores the key under `ANTHROPIC_API_KEY` in the `kagent-anthropic` secret. `anthropic.baseUrl` routes LLM calls through the agentgateway proxy for observability.
 
 ### 4.8 Register MCP Servers as RemoteMCPServer CRDs
 
@@ -876,7 +875,8 @@ Install the Solo distribution of Istio in ambient mode to add mTLS and L7 observ
 export SOLO_ISTIO_LICENSE_KEY=<your-key>
 export ISTIO_VERSION=1.29.1
 export ISTIO_IMAGE=${ISTIO_VERSION}-solo
-export REPO=us-docker.pkg.dev/solo-public/istio-helm
+export ISTIO_HUB=us-docker.pkg.dev/soloio-img/istio
+export REPO=us-docker.pkg.dev/soloio-img/istio-helm
 ```
 
 ### 5.2 Install Solo Distribution of Istio (Ambient Mode)
@@ -896,7 +896,7 @@ helm upgrade -i istiod \
   --version ${ISTIO_VERSION} \
   -n istio-system \
   --set profile=ambient \
-  --set-string global.hub="us-docker.pkg.dev/solo-public/istio" \
+  --set-string global.hub="${ISTIO_HUB}" \
   --set-string global.tag="${ISTIO_IMAGE}" \
   --set-string licenseKey=${SOLO_ISTIO_LICENSE_KEY} \
   --wait
@@ -907,7 +907,7 @@ helm upgrade -i istio-cni \
   --version ${ISTIO_VERSION} \
   -n istio-system \
   --set profile=ambient \
-  --set-string global.hub="us-docker.pkg.dev/solo-public/istio" \
+  --set-string global.hub="${ISTIO_HUB}" \
   --set-string global.tag="${ISTIO_IMAGE}"
 
 # 4. ztunnel — per-node L4 proxy DaemonSet (handles mTLS)
@@ -915,7 +915,7 @@ helm upgrade -i ztunnel \
   oci://${REPO}/ztunnel \
   --version ${ISTIO_VERSION} \
   -n istio-system \
-  --set-string global.hub="us-docker.pkg.dev/solo-public/istio" \
+  --set-string global.hub="${ISTIO_HUB}" \
   --set-string global.tag="${ISTIO_IMAGE}"
 ```
 
@@ -929,7 +929,13 @@ Expected: `istiod` running, `istio-cni-node` DaemonSet pod on each node, `ztunne
 
 ### 5.3 Enroll the amss Namespace
 
-Label the namespace so ztunnel intercepts all traffic:
+Only the `amss` namespace is enrolled. The `kagent` and `agentgateway-system` namespaces are intentionally excluded:
+
+| Namespace | Enrolled | Reason |
+|---|---|---|
+| `amss` | ✅ Yes | Protects data layer: stores ↔ MCP servers ↔ BFF with mTLS |
+| `kagent` | ❌ No | Agents need direct outbound HTTPS to `api.anthropic.com` — ztunnel intercepts and breaks LLM API connections |
+| `agentgateway-system` | ❌ No | Gateway manages its own TLS for ingress and LLM egress |
 
 ```bash
 kubectl label namespace amss istio.io/dataplane-mode=ambient
@@ -938,7 +944,7 @@ kubectl label namespace amss istio.io/dataplane-mode=ambient
 Verify the label is set:
 
 ```bash
-kubectl get namespace amss --show-labels
+kubectl get namespace amss --show-labels | grep istio
 ```
 
 ### 5.4 Verify
@@ -973,9 +979,9 @@ kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
 open http://localhost:4000
 ```
 
-Navigate to the mesh observability view to see the service graph with mTLS indicators. All `amss` namespace traffic (BFF → stores, MCP servers → stores) is now encrypted at the node level by ztunnel.
+Navigate to the mesh observability view to see the service graph with mTLS indicators. All `amss` namespace east-west traffic (BFF → stores, MCP servers → stores) is encrypted by ztunnel. Agent LLM calls from kagent travel outside the mesh directly to the Anthropic API.
 
-> **Ambient mesh transparency**: The application code is unchanged. No sidecars, no certificates managed by workloads, no port-forward changes. ztunnel handles the L4 encryption transparently. The Solo Enterprise UI shows the service topology and confirms mTLS is enforced on all east-west paths.
+> **Mesh scope**: The ambient mesh protects the data layer. `kagent` agents and `agentgateway-system` operate outside the mesh so they can make direct TLS connections to external LLM providers. mTLS-only posture (no `AuthorizationPolicy` resources) maintains allow-all behaviour — strong encryption without authorization restrictions that could break cross-namespace traffic.
 
 ---
 
@@ -1024,11 +1030,11 @@ Focus: Zero-trust east-west mTLS without sidecars, service mesh observability.
 
 **What to show:**
 1. `kubectl get pods -n amss` — all 1/1, no sidecars
-2. `kubectl get namespace amss --show-labels` — `istio.io/dataplane-mode=ambient` set
+2. `kubectl get namespace amss --show-labels | grep istio` — `istio.io/dataplane-mode=ambient` set
 3. Solo Enterprise UI — mesh observability view, service graph for `amss` namespace, mTLS badges on every edge
 4. Make a request, watch the graph light up — BFF → kb-store, ticket-store, crew-store all mTLS encrypted
 
-**Talking point**: "The application code is completely unchanged. No certificate rotation code, no sidecar lifecycle management. ztunnel handles it at the node level."
+**Talking point**: "The data layer (stores, MCP servers, BFF) is encrypted with mTLS via ambient mesh. Agent traffic to LLM providers operates outside the mesh for compatibility — kagent needs direct HTTPS to the Anthropic API. The application code is completely unchanged. No certificate rotation, no sidecar lifecycle management. ztunnel handles it at the node level."
 
 ### Track 4 — Full Stack (Phases 2–5)
 
@@ -1046,7 +1052,7 @@ kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
 3. Switch to Solo Enterprise UI `http://localhost:4000`:
    - **Gateway view**: inbound request trace (browser → agentgateway → BFF)
    - **Agents view**: kagent invocation span, tool calls, LLM egress calls
-   - **Mesh view**: service graph with mTLS on all amss east-west edges
+   - **Mesh view**: service graph with mTLS on all `amss` east-west edges (stores ↔ BFF ↔ MCP servers); `kagent` is outside the mesh so agent → LLM traffic is not shown here
 4. Ask the curator: `curl -s -X POST http://localhost:8080/api/v1/curator -d '{}' -H 'Content-Type: application/json' | jq '.data'` — KB deduplication report
 5. Run activity generator for 2 minutes: `BFF_URL=http://localhost:8080 go run ./activity-generator/.` — watch the service graph fill with traffic
 
@@ -1204,16 +1210,24 @@ Two common causes:
 
 ### ModelConfig Helm conflict on upgrade
 
-If you manually applied `ModelConfig` with `kubectl` before Helm manages it, Helm will refuse to upgrade with a conflict error. Annotate and label it so Helm can adopt it:
+The kagent Helm chart creates a `default-model-config` without `anthropic.baseUrl`. If you apply our config first, Helm will refuse to upgrade with a field ownership conflict. The fix is to delete the resource and let the next `kubectl apply` recreate it:
 
 ```bash
-kubectl annotate modelconfig default-model-config -n kagent \
-  meta.helm.sh/release-name=kagent \
-  meta.helm.sh/release-namespace=kagent \
-  --overwrite
-kubectl label modelconfig default-model-config -n kagent \
-  app.kubernetes.io/managed-by=Helm \
-  --overwrite
+kubectl delete modelconfig default-model-config -n kagent
+kubectl apply -f - <<EOF
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: kagent
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-6
+  apiKeySecret: kagent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
+EOF
 ```
 
 ### agentgateway proxy LoadBalancer stuck in Pending on OrbStack
@@ -1233,18 +1247,40 @@ Check in order:
 
 ### Agent LLM calls not flowing through agentgateway
 
-The `proxy.url` field in `kagent.yaml` must point to the agentgateway proxy service. Verify it is set and then reinstall:
+LLM egress is routed via `anthropic.baseUrl` in the `ModelConfig`, not via `proxy.url` in kagent.yaml (`proxy.url` routes MCP connections and breaks them — do not use it). Verify the ModelConfig has the correct baseUrl:
 
 ```bash
-grep proxy kagent.yaml
-# Should show: url: "http://agentgateway-proxy.agentgateway-system.svc.cluster.local:80"
-
-helm upgrade kagent \
-  oci://us-docker.pkg.dev/solo-public/kagent-enterprise-helm/charts/kagent-enterprise \
-  -n kagent --version ${KAGENT_ENT_VERSION} --values kagent.yaml
+kubectl get modelconfig default-model-config -n kagent -o yaml | grep baseUrl
+# Should show: baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
 ```
 
-Without `proxy.url`, agent LLM calls go directly to the Anthropic API and bypass agentgateway entirely — no traces, no guardrails.
+If missing, delete and re-apply:
+
+```bash
+kubectl delete modelconfig default-model-config -n kagent
+kubectl apply -f - <<EOF
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: kagent
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-6
+  apiKeySecret: kagent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local
+EOF
+```
+
+Then restart the agents to pick up the change:
+
+```bash
+kubectl delete agents --all -n kagent
+kubectl apply -f agents/mission-support-agent/agent.yaml
+kubectl apply -f agents/kb-curator-agent/agent.yaml
+```
 
 ### istio-cni-node pod stuck at 0/1 Ready
 
@@ -1279,6 +1315,33 @@ kubectl label namespace amss istio.io/dataplane-mode-
 kubectl label namespace amss istio.io/dataplane-mode=ambient
 ```
 
+### Agent LLM calls timeout after enrolling kagent in the mesh
+
+If you label the `kagent` namespace with `istio.io/dataplane-mode=ambient`, ztunnel intercepts the agent's outbound HTTPS connections to `api.anthropic.com` and the calls fail with a timeout. Only `amss` should be enrolled. Remove the label to restore agent functionality:
+
+```bash
+kubectl label namespace kagent istio.io/dataplane-mode-
+```
+
+Wait for the kagent-controller to restart, then verify agents are working again:
+
+```bash
+kubectl rollout restart deployment/kagent-controller -n kagent
+kubectl get agents -n kagent
+```
+
+### AuthorizationPolicy breaks cross-namespace traffic
+
+If you create any `AuthorizationPolicy` with `action: ALLOW` in the `amss` namespace, Istio switches to deny-by-default for that namespace. All traffic not explicitly covered by an ALLOW policy will be rejected — including cross-namespace calls from kagent agents to MCP servers and BFF to stores.
+
+To avoid this, do not create any `AuthorizationPolicy` resources in the `amss` namespace. The mTLS-only posture (no authorization policies) provides strong encryption with allow-all behaviour, which is the correct configuration for this demo.
+
+If you accidentally created an `AuthorizationPolicy`, delete it:
+
+```bash
+kubectl delete authorizationpolicy --all -n amss
+```
+
 ### Ambient mesh shows traffic but mTLS is not confirmed
 
 In the Solo Enterprise UI mesh view, mTLS indicators appear only after traffic flows through ztunnel. Send a few requests to generate telemetry:
@@ -1308,4 +1371,5 @@ The ztunnel pod and the amss pods must share the same node for mTLS to be active
 | 2026-05-10 | Phase 4 | kagent Enterprise installed in `kagent` namespace with Anthropic provider (claude-sonnet-4-6). ModelConfig, RemoteMCPServer CRDs, and Agent CRDs applied. Both agents (mission-support-agent, kb-curator-agent) show READY: True. Full A2A chain verified: user → kagent → Claude Sonnet 4.6 → MCP tools → KB Store. Management chart moved from `agentgateway-system` to `kagent` namespace. Key gotchas: management chart namespace, `allowedNamespaces.from: All` on RemoteMCPServer, explicit `modelConfig` in agent YAML, trailing slash on A2A URL, `"kind"` not `"type"` in message parts. Remaining: BFF wiring, agentgateway LLM egress, frontend end-to-end. |
 | 2026-05-11 | Phase 4 | BFF wired to kagent A2A endpoint (`a2a.go`, 17 new tests, 480 → 497 total). `STUB_MODE=false` enables real LLM responses. Full end-to-end chain verified: frontend → agentgateway → BFF → kagent A2A → Claude Sonnet 4.6 → MCP tools → KB Store. Runbook cleanup: consolidated management chart install to `kagent` namespace only (removed Phase 3 UI install step), added Access the Application section to Phase 3, added Access Solo Enterprise UIs section to Phase 4, replaced TODO list with completed BFF wiring steps. License keys simplified to two vars: `AGENTGATEWAY_LICENSE_KEY` and `ANTHROPIC_API_KEY`. |
 | 2026-05-12 | Phase 3 | agentgateway LLM egress fully configured: `AgentgatewayBackend` for Anthropic, `HTTPRoute` for LLM traffic, `EnterpriseAgentgatewayPolicy` tracing with OTel collector. `proxy.url` added to `kagent.yaml` so all declarative agent LLM calls route through agentgateway. Both inbound (browser→BFF) and outbound (agent→LLM) traffic now flows through agentgateway with full observability in Solo Enterprise UI — agent invocations, LLM calls, tool executions all visible as traces. Port-forward established as the standard local access method (OrbStack does not provision LoadBalancer IPs). Troubleshooting entries added: ModelConfig Helm conflict, LoadBalancer Pending, missing traces, agent LLM bypass. |
+| 2026-05-14 | Phase 3/4 | LLM egress corrected: `AgentgatewayBackend` changed from AI backend to static TLS proxy (`spec.static.host: api.anthropic.com`, `spec.policies.tls: {}`). `ModelConfig` updated to include `anthropic.baseUrl` pointing at the agentgateway proxy — this is what actually routes LLM calls through the gateway. `proxy.url` removed from `kagent.yaml` (it routes MCP connections, not LLM calls, and breaks MCP). HTTPRoute for Anthropic scoped to `/v1/messages` path prefix (catch-all broke frontend routing). ModelConfig delete-before-apply pattern adopted to avoid Helm field ownership conflicts. Troubleshooting entries updated. |
 | 2026-05-12 | Phase 5 | Solo distribution of Istio 1.29.1 installed in ambient mode (no sidecars). Four Helm charts: `istio-base`, `istiod`, `istio-cni`, `ztunnel`. `amss` namespace labeled `istio.io/dataplane-mode=ambient` — all east-west traffic (BFF→stores, MCP→stores) now mTLS-encrypted by ztunnel at node level. App pods remain 1/1. mTLS confirmed in Solo Enterprise UI mesh view. Four demo tracks documented covering every product combination from agentgateway-only through full stack. Prerequisites updated (`SOLO_ISTIO_LICENSE_KEY`), teardown updated with Istio uninstall steps, troubleshooting entries added: istio-cni-node NotReady, post-label pod crashes, mTLS not visible in UI. |
