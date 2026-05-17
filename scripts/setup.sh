@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 # setup.sh — One-command install of the full AMSS stack on a clean cluster.
-# Run from the repo root: ./scripts/setup.sh
+# Run from the repo root: ./scripts/setup.sh [--with-mesh]
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+
+# ─────────────────────────────────────────────
+# Flag parsing
+# ─────────────────────────────────────────────
+INSTALL_MESH=false
+for arg in "$@"; do
+  case $arg in
+    --with-mesh) INSTALL_MESH=true ;;
+    *) echo "Unknown option: $arg"; echo "Usage: ./scripts/setup.sh [--with-mesh]"; exit 1 ;;
+  esac
+done
 
 # ─────────────────────────────────────────────
 # Step 0: Check required environment variables
@@ -20,8 +31,8 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
   echo "  ERROR: ANTHROPIC_API_KEY is not set"
   missing=1
 fi
-if [[ -z "${SOLO_ISTIO_LICENSE_KEY:-}" ]]; then
-  echo "  ERROR: SOLO_ISTIO_LICENSE_KEY is not set"
+if [ "$INSTALL_MESH" = true ] && [[ -z "${SOLO_ISTIO_LICENSE_KEY:-}" ]]; then
+  echo "  ERROR: SOLO_ISTIO_LICENSE_KEY is not set (required for --with-mesh)"
   missing=1
 fi
 
@@ -30,8 +41,10 @@ if [[ $missing -eq 1 ]]; then
   echo "  Obtain license keys from your Solo account representative."
   echo "  Then run:"
   echo "    export AGENTGATEWAY_LICENSE_KEY=<key>"
-  echo "    export SOLO_ISTIO_LICENSE_KEY=<key>"
   echo "    export ANTHROPIC_API_KEY=<key>"
+  if [ "$INSTALL_MESH" = true ]; then
+    echo "    export SOLO_ISTIO_LICENSE_KEY=<key>   # required for --with-mesh"
+  fi
   exit 1
 fi
 
@@ -57,7 +70,7 @@ MGMT_CONTEXT="$(kubectl config current-context)"
 
 echo "  KAGENT_ENT_VERSION   = ${KAGENT_ENT_VERSION}"
 echo "  AGENTGATEWAY_VERSION = ${AGENTGATEWAY_VERSION}"
-echo "  ISTIO_VERSION        = ${ISTIO_VERSION}"
+echo "  INSTALL_MESH         = ${INSTALL_MESH}"
 echo "  MGMT_CONTEXT         = ${MGMT_CONTEXT}"
 
 # ─────────────────────────────────────────────
@@ -201,22 +214,33 @@ kubectl rollout status deployment/kagent-controller -n kagent --timeout=120s
 echo "  kagent controller installed."
 
 # ─────────────────────────────────────────────
-# Step 7: Install Solo distribution of Istio (ambient mode)
+# Step 7: Build and deploy AMSS application
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 7: Installing Solo distribution of Istio (ambient mode)..."
+echo "==> Step 7: Building and deploying AMSS application..."
 
-echo "  Cleaning up any stale validating webhooks to prevent field ownership conflicts..."
-kubectl delete validatingwebhookconfiguration istiod-default-validator 2>/dev/null || true
-kubectl delete validatingwebhookconfiguration istio-validator-istio-system 2>/dev/null || true
+./k8s/deploy.sh
 
-helm upgrade -i istio-base \
-  "oci://${ISTIO_REPO}/base" \
-  --version "${ISTIO_VERSION}" \
-  -n istio-system --create-namespace
+echo "  AMSS application deployed."
 
-echo "  Applying istiod Segments RBAC (required for Solo distribution)..."
-kubectl apply -f - <<'EOF'
+# ─────────────────────────────────────────────
+# Step 8 (optional): Install Solo distribution of Istio + enroll amss
+# ─────────────────────────────────────────────
+echo ""
+if [ "$INSTALL_MESH" = true ]; then
+  echo "==> Step 8: Installing Solo distribution of Istio (ambient mode)..."
+
+  echo "  Cleaning up any stale validating webhooks to prevent field ownership conflicts..."
+  kubectl delete validatingwebhookconfiguration istiod-default-validator 2>/dev/null || true
+  kubectl delete validatingwebhookconfiguration istio-validator-istio-system 2>/dev/null || true
+
+  helm upgrade -i istio-base \
+    "oci://${ISTIO_REPO}/base" \
+    --version "${ISTIO_VERSION}" \
+    -n istio-system --create-namespace
+
+  echo "  Applying istiod Segments RBAC (required for Solo distribution)..."
+  kubectl apply -f - <<'EOF'
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -240,64 +264,47 @@ subjects:
   namespace: istio-system
 EOF
 
-helm upgrade -i istiod \
-  "oci://${ISTIO_REPO}/istiod" \
-  --version "${ISTIO_VERSION}" \
-  -n istio-system \
-  --set profile=ambient \
-  --set-string global.hub="${ISTIO_HUB}" \
-  --set-string global.tag="${ISTIO_IMAGE}" \
-  --set-string licenseKey="${SOLO_ISTIO_LICENSE_KEY}" \
-  --timeout 5m \
-  --wait
+  helm upgrade -i istiod \
+    "oci://${ISTIO_REPO}/istiod" \
+    --version "${ISTIO_VERSION}" \
+    -n istio-system \
+    --set profile=ambient \
+    --set-string global.hub="${ISTIO_HUB}" \
+    --set-string global.tag="${ISTIO_IMAGE}" \
+    --set-string licenseKey="${SOLO_ISTIO_LICENSE_KEY}" \
+    --timeout 5m \
+    --wait
 
-helm upgrade -i istio-cni \
-  "oci://${ISTIO_REPO}/cni" \
-  --version "${ISTIO_VERSION}" \
-  -n istio-system \
-  --set profile=ambient \
-  --set-string global.hub="${ISTIO_HUB}" \
-  --set-string global.tag="${ISTIO_IMAGE}"
+  helm upgrade -i istio-cni \
+    "oci://${ISTIO_REPO}/cni" \
+    --version "${ISTIO_VERSION}" \
+    -n istio-system \
+    --set profile=ambient \
+    --set-string global.hub="${ISTIO_HUB}" \
+    --set-string global.tag="${ISTIO_IMAGE}"
 
-helm upgrade -i ztunnel \
-  "oci://${ISTIO_REPO}/ztunnel" \
-  --version "${ISTIO_VERSION}" \
-  -n istio-system \
-  --set-string global.hub="${ISTIO_HUB}" \
-  --set-string global.tag="${ISTIO_IMAGE}"
+  helm upgrade -i ztunnel \
+    "oci://${ISTIO_REPO}/ztunnel" \
+    --version "${ISTIO_VERSION}" \
+    -n istio-system \
+    --set-string global.hub="${ISTIO_HUB}" \
+    --set-string global.tag="${ISTIO_IMAGE}"
 
-echo "  Solo distribution of Istio installed."
+  echo "  Enrolling amss namespace in ambient mesh..."
+  # Only amss is enrolled. kagent excluded (ztunnel breaks outbound HTTPS to LLM
+  # providers). agentgateway-system excluded (gateway manages its own TLS).
+  kubectl label namespace amss istio.io/dataplane-mode=ambient --overwrite
 
-# ─────────────────────────────────────────────
-# Step 8: Build and deploy AMSS application
-# ─────────────────────────────────────────────
-echo ""
-echo "==> Step 8: Building and deploying AMSS application..."
-
-./k8s/deploy.sh
-
-echo "  AMSS application deployed."
+  echo "  Solo distribution of Istio installed. amss namespace enrolled."
+else
+  echo "==> Step 8: Skipping ambient mesh (use --with-mesh to include)."
+fi
 
 # ─────────────────────────────────────────────
-# Step 9: Label amss namespace for ambient mesh
+# Step 9: Configure LLM egress through agentgateway
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 9: Enrolling amss namespace in ambient mesh..."
-
-# Only the amss namespace is enrolled in the ambient mesh.
-# - amss: mTLS on stores <-> MCP servers <-> BFF (data layer protection)
-# - kagent: NOT enrolled — agents need direct outbound HTTPS to LLM providers
-#   (ztunnel interferes with the agent's Anthropic API connections)
-# - agentgateway-system: NOT enrolled — gateway handles its own TLS
-kubectl label namespace amss istio.io/dataplane-mode=ambient --overwrite
-
-echo "  amss namespace enrolled (kagent and agentgateway-system intentionally excluded)."
-
-# ─────────────────────────────────────────────
-# Step 10: Configure LLM egress through agentgateway
-# ─────────────────────────────────────────────
-echo ""
-echo "==> Step 10: Configuring LLM egress through agentgateway..."
+echo "==> Step 9: Configuring LLM egress through agentgateway..."
 
 # LLM Egress Architecture:
 # - kagent agents speak OpenAI format (provider: OpenAI in ModelConfig)
@@ -386,10 +393,10 @@ EOF
 echo "  LLM egress configured."
 
 # ─────────────────────────────────────────────
-# Step 11: Apply agentgateway tracing policy
+# Step 10: Apply agentgateway tracing policy
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 11: Applying agentgateway tracing policy..."
+echo "==> Step 10: Applying agentgateway tracing policy..."
 
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1beta1
@@ -429,10 +436,10 @@ EOF
 echo "  Tracing policy applied."
 
 # ─────────────────────────────────────────────
-# Step 12: Apply AMSS HTTPRoutes
+# Step 11: Apply AMSS HTTPRoutes
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 12: Applying AMSS HTTPRoutes..."
+echo "==> Step 11: Applying AMSS HTTPRoutes..."
 
 kubectl apply -f k8s/agentgateway-routes.yaml
 
@@ -441,10 +448,10 @@ kubectl get httproute -n amss -o wide
 echo "  HTTPRoutes applied."
 
 # ─────────────────────────────────────────────
-# Step 13: Create ModelConfig, RemoteMCPServers, Agent CRDs
+# Step 12: Create ModelConfig, RemoteMCPServers, Agent CRDs
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 13: Creating ModelConfig, RemoteMCPServers, and Agent CRDs..."
+echo "==> Step 12: Creating ModelConfig, RemoteMCPServers, and Agent CRDs..."
 
 echo "  Removing Helm-managed ModelConfig to avoid field ownership conflict..."
 kubectl delete modelconfig default-model-config -n kagent 2>/dev/null || true
@@ -501,10 +508,10 @@ kubectl apply -f agents/kb-curator-agent/agent.yaml
 echo "  ModelConfig, RemoteMCPServers, and Agent CRDs created."
 
 # ─────────────────────────────────────────────
-# Step 14: Enable live agent mode on BFF
+# Step 13: Enable live agent mode on BFF
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 14: Setting BFF to live agent mode (STUB_MODE=false)..."
+echo "==> Step 13: Setting BFF to live agent mode (STUB_MODE=false)..."
 
 kubectl set env deployment/bff -n amss \
   STUB_MODE=false \
@@ -517,10 +524,10 @@ kubectl rollout status deployment/bff -n amss --timeout=120s
 echo "  BFF is in live agent mode."
 
 # ─────────────────────────────────────────────
-# Step 15: Wait for all deployments to be ready
+# Step 14: Wait for all deployments to be ready
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 15: Waiting for all AMSS deployments to be ready..."
+echo "==> Step 14: Waiting for all AMSS deployments to be ready..."
 
 kubectl rollout status deployment/kb-store     -n amss --timeout=120s
 kubectl rollout status deployment/ticket-store -n amss --timeout=120s
@@ -537,13 +544,15 @@ echo "  All deployments are ready."
 # ─────────────────────────────────────────────
 echo ""
 echo "=============================================="
-echo "  AMSS Setup Complete — Full Stack"
+if [ "$INSTALL_MESH" = true ]; then
+  echo "  AMSS Setup Complete — Full Stack (with ambient mesh)"
+else
+  echo "  AMSS Setup Complete — agentgateway + kagent"
+fi
 echo "=============================================="
 echo ""
-echo "  Start access (run these once, leave running):"
-echo ""
-echo "    kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &"
-echo "    kubectl port-forward svc/solo-enterprise-ui -n kagent 4000:80 &"
+echo "  Start the demo:"
+echo "    ./scripts/demo.sh"
 echo ""
 echo "  Access points:"
 echo "    AMSS Application:     http://localhost:8080"
@@ -553,9 +562,9 @@ echo "  Quick smoke test:"
 echo "    curl -s http://localhost:8080/health | jq .data.status"
 echo "    curl -s http://localhost:8080/api/v1/crew | jq .data.total"
 echo ""
-echo "  Run a demo track:"
-echo "    ./scripts/demo-track1.sh   # agentgateway only"
-echo "    ./scripts/demo-track2.sh   # + kagent agents"
-echo "    ./scripts/demo-track3.sh   # + ambient mesh"
-echo "    ./scripts/demo-track4.sh   # full stack"
-echo ""
+if [ "$INSTALL_MESH" = true ]; then
+  echo "  Ambient mesh: amss namespace enrolled (mTLS on data layer)"
+  echo "    kubectl get namespace amss --show-labels | grep istio"
+  echo "    kubectl get pods -n amss   # all should be 1/1 (no sidecars)"
+  echo ""
+fi

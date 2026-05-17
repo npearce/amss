@@ -1008,78 +1008,24 @@ Navigate to the mesh observability view to see the service graph with mTLS indic
 
 ---
 
-## Demo Tracks
+## Demo
 
-Four demo tracks using the same port-forwards: `kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &` and `kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &`.
-
-### Track 1 — agentgateway Only (Phases 2–3)
-
-Focus: AI-native gateway, HTTPRoute-based routing, stub chat.
-
-**What to show:**
-1. `open http://localhost:8080` — full frontend loads, user switcher works
-2. Select an astronaut, send a chat message — stub response cites KB articles
-3. Solo Enterprise UI at `http://localhost:4000` — gateway observability dashboard, request counts, latency
-
-**Curl demo:**
 ```bash
-curl -s http://localhost:8080/api/v1/chat \
-  -X POST -H 'Content-Type: application/json' \
-  -d '{"crew_id":"wiseman-r","session_id":"demo-1","mission":"artemis-ii","message":"WCS pressure is dropping"}' \
-  | jq '.data'
+./scripts/demo.sh
 ```
 
-### Track 2 — agentgateway + kagent (Phases 2–4)
+Starts port-forwards for agentgateway and Solo Enterprise UI, and launches the activity generator.
 
-Focus: Real AI agents, A2A protocol, tool use via MCP, end-to-end traces.
+| URL | What |
+|---|---|
+| http://localhost:8080 | AMSS application (through agentgateway) |
+| http://localhost:4000 | Solo Enterprise UI (kagent + agentgateway observability) |
 
-**What to show:**
-1. Open Solo Enterprise UI `http://localhost:4000` — agents panel, both agents READY
-2. Open frontend `http://localhost:8080`, send a chat — this hits kagent via A2A
-3. Switch back to UI — show the trace: kagent invocation → LLM call (via agentgateway egress) → tool calls (search_kb, read_kb_article) → response
-4. Discuss: every token, every tool call visible; agentgateway is the egress for LLM traffic
+Press Ctrl+C to stop. To stop without tearing down the lab:
 
-**Direct A2A curl (bypass BFF):**
 ```bash
-kubectl port-forward svc/kagent-controller -n kagent 8083:8083 &
-curl --max-time 120 -X POST http://localhost:8083/api/a2a/kagent/mission-support-agent/ \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"message/send","id":"demo-1","params":{"message":{"role":"user","parts":[{"kind":"text","text":"What is the WCS flush procedure?"}]}}}'
+./scripts/demo-stop.sh
 ```
-
-### Track 3 — agentgateway + Ambient Mesh (Phases 2–3, 5)
-
-Focus: Zero-trust east-west mTLS without sidecars, service mesh observability.
-
-**What to show:**
-1. `kubectl get pods -n amss` — all 1/1, no sidecars
-2. `kubectl get namespace amss --show-labels | grep istio` — `istio.io/dataplane-mode=ambient` set
-3. Solo Enterprise UI — mesh observability view, service graph for `amss` namespace, mTLS badges on every edge
-4. Make a request, watch the graph light up — BFF → kb-store, ticket-store, crew-store all mTLS encrypted
-
-**Talking point**: "The data layer (stores, MCP servers, BFF) is encrypted with mTLS via ambient mesh. Agent traffic to LLM providers operates outside the mesh for compatibility — kagent needs direct HTTPS to the Anthropic API. The application code is completely unchanged. No certificate rotation, no sidecar lifecycle management. ztunnel handles it at the node level."
-
-### Track 4 — Full Stack (Phases 2–5)
-
-Full demo: all products, all traffic encrypted, all calls traced.
-
-**Setup:**
-```bash
-kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
-kubectl port-forward service/solo-enterprise-ui -n kagent 4000:80 &
-```
-
-**Demo flow:**
-1. Open frontend `http://localhost:8080` — switch to astronaut Reid Wiseman
-2. Send chat: "WCS pressure is dropping, what do I do?" — real Claude Sonnet 4.6 response
-3. Switch to Solo Enterprise UI `http://localhost:4000`:
-   - **Gateway view**: inbound request trace (browser → agentgateway → BFF)
-   - **Agents view**: kagent invocation span, tool calls, LLM egress calls
-   - **Mesh view**: service graph with mTLS on all `amss` east-west edges (stores ↔ BFF ↔ MCP servers); `kagent` is outside the mesh so agent → LLM traffic is not shown here
-4. Ask the curator: `curl -s -X POST http://localhost:8080/api/v1/curator -d '{}' -H 'Content-Type: application/json' | jq '.data'` — KB deduplication report
-5. Run activity generator for 2 minutes: `BFF_URL=http://localhost:8080 go run ./activity-generator/.` — watch the service graph fill with traffic
-
-**Provider switching talking point**: "Want to switch from Anthropic to OpenAI? Change one `AgentgatewayBackend` CRD. The agents keep using OpenAI format — which they're already doing. Zero code changes, zero agent reconfiguration. The gateway absorbs the provider difference."
 
 ---
 
