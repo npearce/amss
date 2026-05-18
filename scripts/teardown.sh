@@ -22,13 +22,24 @@ echo "==> Removing ambient mesh label from amss namespace..."
 kubectl label namespace amss istio.io/dataplane-mode- --ignore-not-found 2>/dev/null || true
 
 # ─────────────────────────────────────────────
-# 2. Delete AMSS application namespace
+# 2. Remove Keycloak auth resources and namespace
+# ─────────────────────────────────────────────
+echo "==> Removing Keycloak auth resources..."
+kubectl delete enterpriseagentgatewaypolicy keycloak-auth -n amss --ignore-not-found 2>/dev/null || true
+kubectl delete authconfig keycloak-jwt -n agentgateway-system --ignore-not-found 2>/dev/null || true
+kubectl delete secret keycloak-client -n amss --ignore-not-found 2>/dev/null || true
+
+echo "==> Deleting keycloak namespace..."
+kubectl delete namespace keycloak --ignore-not-found || true
+
+# ─────────────────────────────────────────────
+# 3. Delete AMSS application namespace
 # ─────────────────────────────────────────────
 echo "==> Deleting AMSS application namespace..."
 kubectl delete namespace amss --ignore-not-found || true
 
 # ─────────────────────────────────────────────
-# 3. Uninstall ambient mesh (reverse install order)
+# 4. Uninstall ambient mesh (reverse install order)
 # ─────────────────────────────────────────────
 echo "==> Uninstalling ambient mesh (ztunnel, cni, istiod, base)..."
 helm uninstall ztunnel    -n istio-system 2>/dev/null || true
@@ -40,7 +51,7 @@ echo "==> Deleting istio-system namespace..."
 kubectl delete namespace istio-system --ignore-not-found || true
 
 # ─────────────────────────────────────────────
-# 4. Uninstall kagent
+# 5. Uninstall kagent
 # ─────────────────────────────────────────────
 echo "==> Uninstalling kagent controller..."
 helm uninstall kagent -n kagent 2>/dev/null || true
@@ -55,7 +66,7 @@ echo "==> Deleting kagent namespace..."
 kubectl delete namespace kagent --ignore-not-found || true
 
 # ─────────────────────────────────────────────
-# 5. Uninstall agentgateway
+# 6. Uninstall agentgateway
 # ─────────────────────────────────────────────
 echo "==> Uninstalling agentgateway control plane..."
 helm uninstall enterprise-agentgateway -n agentgateway-system 2>/dev/null || true
@@ -67,7 +78,7 @@ echo "==> Deleting agentgateway-system namespace..."
 kubectl delete namespace agentgateway-system --ignore-not-found || true
 
 # ─────────────────────────────────────────────
-# 6. Delete Gateway API CRDs
+# 7. Delete Gateway API CRDs
 # ─────────────────────────────────────────────
 echo "==> Deleting Gateway API CRDs..."
 kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml \

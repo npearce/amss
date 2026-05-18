@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -53,6 +54,100 @@ type StepResult struct {
 	RawBody      string
 }
 
+// AuthConfig holds optional JWT auth configuration for BFF requests.
+//
+// Three modes:
+//   - refresh: all Keycloak fields set — token is fetched and refreshed automatically
+//   - static:  only StaticToken set — used as-is for every request, no refresh
+//   - none:    neither set — requests are made without an Authorization header
+type AuthConfig struct {
+	StaticToken          string
+	KeycloakURL          string
+	KeycloakClientID     string
+	KeycloakClientSecret string
+	KeycloakUsername     string
+	KeycloakPassword     string
+
+	mu           sync.Mutex
+	currentToken string
+}
+
+// mode returns "refresh", "static", or "none".
+func (a *AuthConfig) mode() string {
+	if a.KeycloakURL != "" && a.KeycloakClientID != "" && a.KeycloakClientSecret != "" &&
+		a.KeycloakUsername != "" && a.KeycloakPassword != "" {
+		return "refresh"
+	}
+	if a.StaticToken != "" {
+		return "static"
+	}
+	return "none"
+}
+
+// Token returns the current bearer token, or empty string if none is configured.
+func (a *AuthConfig) Token() string {
+	switch a.mode() {
+	case "static":
+		return a.StaticToken
+	case "refresh":
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.currentToken
+	default:
+		return ""
+	}
+}
+
+// Refresh fetches a fresh token from Keycloak using the password grant.
+// It is a no-op when not in refresh mode.
+func (a *AuthConfig) Refresh(client *http.Client) error {
+	if a.mode() != "refresh" {
+		return nil
+	}
+	vals := url.Values{
+		"client_id":     {a.KeycloakClientID},
+		"client_secret": {a.KeycloakClientSecret},
+		"username":      {a.KeycloakUsername},
+		"password":      {a.KeycloakPassword},
+		"grant_type":    {"password"},
+	}
+	resp, err := client.PostForm(
+		a.KeycloakURL+"/realms/master/protocol/openid-connect/token",
+		vals,
+	)
+	if err != nil {
+		return fmt.Errorf("keycloak token request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("keycloak token: HTTP %d: %s", resp.StatusCode, body)
+	}
+	var result struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode token response: %w", err)
+	}
+	if result.AccessToken == "" {
+		return fmt.Errorf("keycloak returned empty access_token")
+	}
+	a.mu.Lock()
+	a.currentToken = result.AccessToken
+	a.mu.Unlock()
+	return nil
+}
+
+// addAuthHeader adds Authorization: Bearer <token> to req when auth has a non-empty token.
+func addAuthHeader(req *http.Request, auth *AuthConfig) {
+	if auth == nil {
+		return
+	}
+	if token := auth.Token(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+}
+
 // LoadScenarios reads and parses scenarios from a JSON file.
 func LoadScenarios(path string) ([]Scenario, error) {
 	f, err := os.Open(path)
@@ -69,7 +164,6 @@ func LoadScenarios(path string) ([]Scenario, error) {
 }
 
 // resolveTemplates replaces {{prev.<key>}} placeholders in s using data.
-// It also handles {{prev.response}} for chat response text from the previous step.
 func resolveTemplates(s string, data map[string]interface{}) string {
 	for k, v := range data {
 		placeholder := "{{prev." + k + "}}"
@@ -79,7 +173,7 @@ func resolveTemplates(s string, data map[string]interface{}) string {
 }
 
 // humanDelay sleeps for a random duration uniformly distributed in [minSec, maxSec].
-// Returns early if ctx is cancelled. If both are zero the default is used by the caller.
+// Returns early if ctx is cancelled.
 func humanDelay(ctx context.Context, minSec, maxSec int) {
 	if minSec < 0 {
 		minSec = 0
@@ -103,7 +197,6 @@ func humanDelay(ctx context.Context, minSec, maxSec int) {
 }
 
 // formatCrewLabel converts a crew_id like "koch-c" into "Koch" for log output.
-// Ground-control IDs like "gc-eclss" become "Gc-eclss" — acceptable for internal logs.
 func formatCrewLabel(crewID string) string {
 	if crewID == "" {
 		return "system"
@@ -130,9 +223,10 @@ func logf(format string, args ...interface{}) {
 
 // ExecuteStep sends one HTTP request and returns the result.
 // prevData is used for {{prev.<key>}} template resolution in path and body.
-func ExecuteStep(client *http.Client, bffURL string, step Step, prevData map[string]interface{}) (StepResult, error) {
+// auth adds an Authorization header when configured.
+func ExecuteStep(client *http.Client, bffURL string, step Step, prevData map[string]interface{}, auth *AuthConfig) (StepResult, error) {
 	resolvedPath := resolveTemplates(step.Path, prevData)
-	url := bffURL + resolvedPath
+	u := bffURL + resolvedPath
 
 	var bodyReader io.Reader
 	if step.Body != nil {
@@ -144,13 +238,14 @@ func ExecuteStep(client *http.Client, bffURL string, step Step, prevData map[str
 		bodyReader = bytes.NewBufferString(resolved)
 	}
 
-	req, err := http.NewRequest(step.Method, url, bodyReader)
+	req, err := http.NewRequest(step.Method, u, bodyReader)
 	if err != nil {
 		return StepResult{}, fmt.Errorf("build request: %w", err)
 	}
 	if step.Body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	addAuthHeader(req, auth)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -194,12 +289,7 @@ func mergeMaps(base, overrides map[string]interface{}) map[string]interface{} {
 }
 
 // RunScenario executes one scenario with humanized timing.
-// A unique sessionID is generated per call; it is available in all steps as
-// {{prev.session_id}} so multi-turn chat conversations share a session.
-// Steps with stash_as save their response Data["id"] into a carry map that
-// persists for the rest of the scenario, making it available as {{prev.<key>}}.
-// Non-2xx steps log the error and continue — they do not abort the scenario.
-func RunScenario(ctx context.Context, client *http.Client, bffURL string, scenario Scenario) {
+func RunScenario(ctx context.Context, client *http.Client, bffURL string, scenario Scenario, auth *AuthConfig) {
 	sessionID := generateSessionID()
 
 	if scenario.StartOffsetSeconds > 0 {
@@ -211,7 +301,6 @@ func RunScenario(ctx context.Context, client *http.Client, bffURL string, scenar
 		}
 	}
 
-	// carry persists across all steps: session_id + any stash_as values
 	carry := map[string]interface{}{
 		"session_id": sessionID,
 	}
@@ -222,7 +311,6 @@ func RunScenario(ctx context.Context, client *http.Client, bffURL string, scenar
 			return
 		}
 
-		// Pre-delay: simulates the crew member thinking or typing
 		preMin, preMax := step.PreDelayMin, step.PreDelayMax
 		if preMin == 0 && preMax == 0 {
 			preMin, preMax = defaultPreDelayMin, defaultPreDelayMax
@@ -232,12 +320,10 @@ func RunScenario(ctx context.Context, client *http.Client, bffURL string, scenar
 			return
 		}
 
-		// Log the action
 		label := formatCrewLabel(step.CrewID)
 		logf("%s: %s", label, step.Description)
 
-		// Execute the step
-		result, err := ExecuteStep(client, bffURL, step, prevData)
+		result, err := ExecuteStep(client, bffURL, step, prevData, auth)
 		if err != nil {
 			logf("ERROR in %q step %d: %v (continuing)", scenario.Name, i+1, err)
 		} else if result.StatusCode < 200 || result.StatusCode >= 300 {
@@ -247,17 +333,14 @@ func RunScenario(ctx context.Context, client *http.Client, bffURL string, scenar
 			if stepData == nil {
 				stepData = map[string]interface{}{}
 			}
-			// If the step requests a stash, save the id before prevData is replaced
 			if step.StashAs != "" {
 				if id, ok := stepData["id"]; ok {
 					carry[step.StashAs] = id
 				}
 			}
-			// Merge response data with carry so session_id and stashed values survive
 			prevData = mergeMaps(stepData, carry)
 		}
 
-		// Post-delay: simulates reading the response
 		postMin, postMax := step.PostDelayMin, step.PostDelayMax
 		if postMin == 0 && postMax == 0 {
 			postMin, postMax = defaultPostDelayMin, defaultPostDelayMax
@@ -268,25 +351,26 @@ func RunScenario(ctx context.Context, client *http.Client, bffURL string, scenar
 
 // RunCycle launches all scenarios as concurrent goroutines and waits for all
 // to finish or ctx to be cancelled.
-func RunCycle(ctx context.Context, client *http.Client, bffURL string, scenarios []Scenario) {
+func RunCycle(ctx context.Context, client *http.Client, bffURL string, scenarios []Scenario, auth *AuthConfig) {
 	var wg sync.WaitGroup
 	for _, s := range scenarios {
 		s := s
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			RunScenario(ctx, client, bffURL, s)
+			RunScenario(ctx, client, bffURL, s, auth)
 		}()
 	}
 	wg.Wait()
 }
 
 // ResetStores calls POST /api/v1/reset on the BFF to reload all seed data.
-func ResetStores(ctx context.Context, client *http.Client, bffURL string) error {
+func ResetStores(ctx context.Context, client *http.Client, bffURL string, auth *AuthConfig) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, bffURL+"/api/v1/reset", nil)
 	if err != nil {
 		return fmt.Errorf("build reset request: %w", err)
 	}
+	addAuthHeader(req, auth)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("reset request failed: %w", err)

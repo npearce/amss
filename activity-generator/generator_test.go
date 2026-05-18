@@ -300,6 +300,172 @@ func TestMergeMaps_DoesNotMutateInputs(t *testing.T) {
 	}
 }
 
+// ─── AuthConfig ──────────────────────────────────────────────
+
+func TestAuthConfig_Mode_Refresh(t *testing.T) {
+	a := &AuthConfig{
+		KeycloakURL:          "http://kc:8080",
+		KeycloakClientID:     "amss",
+		KeycloakClientSecret: "secret",
+		KeycloakUsername:     "wiseman",
+		KeycloakPassword:     "artemis",
+	}
+	if got := a.mode(); got != "refresh" {
+		t.Errorf("want refresh, got %s", got)
+	}
+}
+
+func TestAuthConfig_Mode_Static(t *testing.T) {
+	a := &AuthConfig{StaticToken: "tok-abc"}
+	if got := a.mode(); got != "static" {
+		t.Errorf("want static, got %s", got)
+	}
+}
+
+func TestAuthConfig_Mode_None(t *testing.T) {
+	a := &AuthConfig{}
+	if got := a.mode(); got != "none" {
+		t.Errorf("want none, got %s", got)
+	}
+}
+
+func TestAuthConfig_Mode_PartialKeycloakFields(t *testing.T) {
+	// Partial Keycloak config (missing password) falls back to none, not refresh.
+	a := &AuthConfig{
+		KeycloakURL:      "http://kc:8080",
+		KeycloakClientID: "amss",
+	}
+	if got := a.mode(); got != "none" {
+		t.Errorf("partial keycloak fields: want none, got %s", got)
+	}
+}
+
+func TestAuthConfig_Token_Static(t *testing.T) {
+	a := &AuthConfig{StaticToken: "my-static-token"}
+	if got := a.Token(); got != "my-static-token" {
+		t.Errorf("want my-static-token, got %s", got)
+	}
+}
+
+func TestAuthConfig_Token_Refresh(t *testing.T) {
+	a := &AuthConfig{
+		KeycloakURL:          "http://kc:8080",
+		KeycloakClientID:     "amss",
+		KeycloakClientSecret: "secret",
+		KeycloakUsername:     "wiseman",
+		KeycloakPassword:     "artemis",
+		currentToken:         "refresh-token-xyz",
+	}
+	if got := a.Token(); got != "refresh-token-xyz" {
+		t.Errorf("want refresh-token-xyz, got %s", got)
+	}
+}
+
+func TestAuthConfig_Token_None(t *testing.T) {
+	a := &AuthConfig{}
+	if got := a.Token(); got != "" {
+		t.Errorf("want empty token, got %s", got)
+	}
+}
+
+// ─── Refresh ─────────────────────────────────────────────────
+
+func TestRefreshToken_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/realms/master/protocol/openid-connect/token" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		if r.FormValue("grant_type") != "password" || r.FormValue("username") != "agent" {
+			http.Error(w, "bad params", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"access_token": "fresh-token-123"})
+	}))
+	defer srv.Close()
+
+	a := &AuthConfig{
+		KeycloakURL:          srv.URL,
+		KeycloakClientID:     "amss",
+		KeycloakClientSecret: "secret",
+		KeycloakUsername:     "agent",
+		KeycloakPassword:     "pass",
+	}
+	if err := a.Refresh(srv.Client()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := a.Token(); got != "fresh-token-123" {
+		t.Errorf("want fresh-token-123, got %s", got)
+	}
+}
+
+func TestRefreshToken_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	a := &AuthConfig{
+		KeycloakURL:          srv.URL,
+		KeycloakClientID:     "amss",
+		KeycloakClientSecret: "wrong",
+		KeycloakUsername:     "agent",
+		KeycloakPassword:     "wrong",
+	}
+	if err := a.Refresh(srv.Client()); err == nil {
+		t.Fatal("want error for HTTP 401, got nil")
+	}
+}
+
+func TestRefreshToken_NetworkError(t *testing.T) {
+	a := &AuthConfig{
+		KeycloakURL:          "http://127.0.0.1:1",
+		KeycloakClientID:     "amss",
+		KeycloakClientSecret: "secret",
+		KeycloakUsername:     "agent",
+		KeycloakPassword:     "pass",
+	}
+	if err := a.Refresh(http.DefaultClient); err == nil {
+		t.Fatal("want network error, got nil")
+	}
+}
+
+func TestRefreshToken_EmptyAccessToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"access_token": ""})
+	}))
+	defer srv.Close()
+
+	a := &AuthConfig{
+		KeycloakURL:          srv.URL,
+		KeycloakClientID:     "amss",
+		KeycloakClientSecret: "secret",
+		KeycloakUsername:     "agent",
+		KeycloakPassword:     "pass",
+	}
+	if err := a.Refresh(srv.Client()); err == nil {
+		t.Fatal("want error for empty access_token, got nil")
+	}
+}
+
+func TestRefreshToken_NoopWhenNotRefreshMode(t *testing.T) {
+	a := &AuthConfig{StaticToken: "static-tok"}
+	// Refresh should be a no-op and not return an error.
+	if err := a.Refresh(http.DefaultClient); err != nil {
+		t.Errorf("want no-op for static mode, got error: %v", err)
+	}
+	// Static token unchanged.
+	if got := a.Token(); got != "static-tok" {
+		t.Errorf("static token should be unchanged, got %s", got)
+	}
+}
+
 // ─── ExecuteStep ─────────────────────────────────────────────
 
 func TestExecuteStep_GET_Success(t *testing.T) {
@@ -317,7 +483,7 @@ func TestExecuteStep_GET_Success(t *testing.T) {
 	defer srv.Close()
 
 	step := Step{Method: "GET", Path: "/tickets", Description: "list tickets"}
-	result, err := ExecuteStep(srv.Client(), srv.URL, step, nil)
+	result, err := ExecuteStep(srv.Client(), srv.URL, step, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +513,7 @@ func TestExecuteStep_POST_WithBody(t *testing.T) {
 		Body:        map[string]interface{}{"title": "Test", "severity": "P3"},
 		Description: "create ticket",
 	}
-	result, err := ExecuteStep(srv.Client(), srv.URL, step, nil)
+	result, err := ExecuteStep(srv.Client(), srv.URL, step, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,7 +540,7 @@ func TestExecuteStep_TemplateInPath(t *testing.T) {
 	defer srv.Close()
 
 	step := Step{Method: "PATCH", Path: "/tickets/{{prev.id}}", Body: map[string]interface{}{"status": "closed"}}
-	result, err := ExecuteStep(srv.Client(), srv.URL, step, map[string]interface{}{"id": "AMSS-001"})
+	result, err := ExecuteStep(srv.Client(), srv.URL, step, map[string]interface{}{"id": "AMSS-001"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -403,7 +569,7 @@ func TestExecuteStep_TemplateInBody(t *testing.T) {
 	}
 	_, err := ExecuteStep(srv.Client(), srv.URL, step, map[string]interface{}{
 		"session_id": "sess-abc-1234",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -419,7 +585,7 @@ func TestExecuteStep_Non2xx(t *testing.T) {
 	defer srv.Close()
 
 	step := Step{Method: "GET", Path: "/tickets/AMSS-999"}
-	result, err := ExecuteStep(srv.Client(), srv.URL, step, nil)
+	result, err := ExecuteStep(srv.Client(), srv.URL, step, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -430,9 +596,68 @@ func TestExecuteStep_Non2xx(t *testing.T) {
 
 func TestExecuteStep_NetworkError(t *testing.T) {
 	step := Step{Method: "GET", Path: "/tickets"}
-	_, err := ExecuteStep(http.DefaultClient, "http://127.0.0.1:1", step, nil)
+	_, err := ExecuteStep(http.DefaultClient, "http://127.0.0.1:1", step, nil, nil)
 	if err == nil {
 		t.Fatal("want network error, got nil")
+	}
+}
+
+func TestExecuteStep_WithAuthHeader(t *testing.T) {
+	var capturedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}, "error": nil})
+	}))
+	defer srv.Close()
+
+	auth := &AuthConfig{StaticToken: "test-bearer-token"}
+	step := Step{Method: "GET", Path: "/tickets", Description: "list"}
+	_, err := ExecuteStep(srv.Client(), srv.URL, step, nil, auth)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedAuth != "Bearer test-bearer-token" {
+		t.Errorf("want Authorization: Bearer test-bearer-token, got %q", capturedAuth)
+	}
+}
+
+func TestExecuteStep_NoAuth_NilConfig(t *testing.T) {
+	var capturedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}, "error": nil})
+	}))
+	defer srv.Close()
+
+	step := Step{Method: "GET", Path: "/tickets", Description: "list"}
+	_, err := ExecuteStep(srv.Client(), srv.URL, step, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedAuth != "" {
+		t.Errorf("want no Authorization header, got %q", capturedAuth)
+	}
+}
+
+func TestExecuteStep_NoAuth_EmptyToken(t *testing.T) {
+	var capturedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}, "error": nil})
+	}))
+	defer srv.Close()
+
+	auth := &AuthConfig{} // no token set
+	step := Step{Method: "GET", Path: "/tickets", Description: "list"}
+	_, err := ExecuteStep(srv.Client(), srv.URL, step, nil, auth)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedAuth != "" {
+		t.Errorf("want no Authorization header for empty token, got %q", capturedAuth)
 	}
 }
 
@@ -440,8 +665,7 @@ func TestExecuteStep_NetworkError(t *testing.T) {
 
 func noDelay() (int, int) { return -1, -1 }
 
-// stepND returns a Step with delays bypassed (PreDelayMin=-1 skips default substitution;
-// humanDelay clamps negatives to 0 and returns immediately).
+// stepND returns a Step with delays bypassed.
 func stepND(method, path, desc string, body map[string]interface{}) Step {
 	pre, post := noDelay()
 	return Step{
@@ -480,14 +704,13 @@ func TestRunScenario_MultiStep_TemplateChain(t *testing.T) {
 			stepND("PATCH", "/tickets/{{prev.id}}", "close", map[string]interface{}{"status": "closed"}),
 		},
 	}
-	RunScenario(context.Background(), srv.Client(), srv.URL, scenario)
+	RunScenario(context.Background(), srv.Client(), srv.URL, scenario, nil)
 	if atomic.LoadInt32(&callCount) != 2 {
 		t.Errorf("want 2 HTTP calls, got %d", callCount)
 	}
 }
 
 func TestRunScenario_ContinuesOnError(t *testing.T) {
-	// v2 behavior: non-2xx does NOT abort; all steps still run
 	var callCount int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&callCount, 1)
@@ -502,7 +725,7 @@ func TestRunScenario_ContinuesOnError(t *testing.T) {
 			stepND("PATCH", "/tickets/fallback", "step 2 — still runs", map[string]interface{}{"status": "closed"}),
 		},
 	}
-	RunScenario(context.Background(), srv.Client(), srv.URL, scenario)
+	RunScenario(context.Background(), srv.Client(), srv.URL, scenario, nil)
 	if atomic.LoadInt32(&callCount) != 2 {
 		t.Errorf("v2 should continue after error: want 2 HTTP calls, got %d", callCount)
 	}
@@ -520,14 +743,14 @@ func TestRunScenario_ContextCancelled(t *testing.T) {
 	defer srv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel before starting
+	cancel()
 	scenario := Scenario{
 		Name: "cancelled",
 		Steps: []Step{
 			stepND("GET", "/tickets", "should not run", nil),
 		},
 	}
-	RunScenario(ctx, srv.Client(), srv.URL, scenario)
+	RunScenario(ctx, srv.Client(), srv.URL, scenario, nil)
 	if atomic.LoadInt32(&callCount) != 0 {
 		t.Errorf("cancelled context: want 0 calls, got %d", callCount)
 	}
@@ -560,7 +783,7 @@ func TestRunScenario_SessionID_InCarry(t *testing.T) {
 			},
 		},
 	}
-	RunScenario(context.Background(), srv.Client(), srv.URL, scenario)
+	RunScenario(context.Background(), srv.Client(), srv.URL, scenario, nil)
 	sid, _ := receivedBody["session_id"].(string)
 	if !strings.HasPrefix(sid, "sess-") {
 		t.Errorf("want session_id with sess- prefix in body, got %q", sid)
@@ -575,7 +798,6 @@ func TestRunScenario_StashAs_PersistsAcrossSteps(t *testing.T) {
 		switch r.Method {
 		case "POST":
 			if strings.HasSuffix(r.URL.Path, "/comments") {
-				// comment returns comment object (different id)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data": map[string]interface{}{"id": "comment-999"}, "error": nil,
 				})
@@ -607,7 +829,7 @@ func TestRunScenario_StashAs_PersistsAcrossSteps(t *testing.T) {
 			mkStep("PUT", "/tickets/{{prev.ticket_id}}", "close", map[string]interface{}{"status": "closed"}, ""),
 		},
 	}
-	RunScenario(context.Background(), srv.Client(), srv.URL, scenario)
+	RunScenario(context.Background(), srv.Client(), srv.URL, scenario, nil)
 
 	if len(paths) != 3 {
 		t.Fatalf("want 3 HTTP calls, got %d: %v", len(paths), paths)
@@ -634,7 +856,6 @@ func TestRunScenario_StartOffset_Respected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	// start_offset_seconds of 60 means the scenario won't run within 50ms
 	scenario := Scenario{
 		Name:               "delayed start",
 		StartOffsetSeconds: 60,
@@ -642,9 +863,29 @@ func TestRunScenario_StartOffset_Respected(t *testing.T) {
 			{Method: "GET", Path: "/tickets", Description: "should not run within timeout"},
 		},
 	}
-	RunScenario(ctx, srv.Client(), srv.URL, scenario)
+	RunScenario(ctx, srv.Client(), srv.URL, scenario, nil)
 	if atomic.LoadInt32(&callCount) != 0 {
 		t.Errorf("start offset should delay execution: want 0 calls, got %d", callCount)
+	}
+}
+
+func TestRunScenario_AuthHeaderPropagated(t *testing.T) {
+	var capturedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}, "error": nil})
+	}))
+	defer srv.Close()
+
+	auth := &AuthConfig{StaticToken: "scenario-token"}
+	scenario := Scenario{
+		Name:  "auth propagation",
+		Steps: []Step{stepND("GET", "/tickets", "list", nil)},
+	}
+	RunScenario(context.Background(), srv.Client(), srv.URL, scenario, auth)
+	if capturedAuth != "Bearer scenario-token" {
+		t.Errorf("want Bearer scenario-token, got %q", capturedAuth)
 	}
 }
 
@@ -666,7 +907,7 @@ func TestRunCycle_AllScenariosRun(t *testing.T) {
 		{Name: "s2", Steps: []Step{stepND("GET", "/t2", "d2", nil)}},
 		{Name: "s3", Steps: []Step{stepND("GET", "/t3", "d3", nil)}},
 	}
-	RunCycle(context.Background(), srv.Client(), srv.URL, scenarios)
+	RunCycle(context.Background(), srv.Client(), srv.URL, scenarios, nil)
 	if atomic.LoadInt32(&callCount) != 3 {
 		t.Errorf("want 3 HTTP calls (one per scenario), got %d", callCount)
 	}
@@ -688,7 +929,7 @@ func TestRunCycle_ContextCancelled(t *testing.T) {
 	scenarios := []Scenario{
 		{Name: "s1", Steps: []Step{stepND("GET", "/t", "d", nil)}},
 	}
-	RunCycle(ctx, srv.Client(), srv.URL, scenarios)
+	RunCycle(ctx, srv.Client(), srv.URL, scenarios, nil)
 	if atomic.LoadInt32(&callCount) != 0 {
 		t.Errorf("cancelled context: want 0 calls, got %d", callCount)
 	}
@@ -706,14 +947,31 @@ func TestResetStores_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := ResetStores(context.Background(), srv.Client(), srv.URL)
+	err := ResetStores(context.Background(), srv.Client(), srv.URL, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
+func TestResetStores_WithAuth(t *testing.T) {
+	var capturedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	auth := &AuthConfig{StaticToken: "reset-token"}
+	if err := ResetStores(context.Background(), srv.Client(), srv.URL, auth); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedAuth != "Bearer reset-token" {
+		t.Errorf("want Bearer reset-token, got %q", capturedAuth)
+	}
+}
+
 func TestResetStores_NetworkError(t *testing.T) {
-	err := ResetStores(context.Background(), http.DefaultClient, "http://127.0.0.1:1")
+	err := ResetStores(context.Background(), http.DefaultClient, "http://127.0.0.1:1", nil)
 	if err == nil {
 		t.Fatal("want network error, got nil")
 	}
@@ -727,7 +985,7 @@ func TestResetStores_ContextCancelled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := ResetStores(ctx, srv.Client(), srv.URL)
+	err := ResetStores(ctx, srv.Client(), srv.URL, nil)
 	if err == nil {
 		t.Fatal("want error for cancelled context, got nil")
 	}

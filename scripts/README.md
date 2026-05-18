@@ -4,11 +4,13 @@
 
 | Script | What it does |
 |---|---|
-| `setup.sh` | Full stack install (agentgateway + kagent + AMSS app) |
+| `setup.sh` | Full stack install (agentgateway + kagent + Keycloak + AMSS app) |
 | `setup.sh --with-mesh` | Above + Solo distribution of Istio ambient mesh |
 | `teardown.sh` | Complete removal of all components |
 | `demo.sh` | Start the demo (port-forwards + activity generator) |
 | `demo-stop.sh` | Stop the demo without tearing down the environment |
+
+Keycloak is deployed automatically as part of `setup.sh` — no separate step required.
 
 ## Quick Start
 

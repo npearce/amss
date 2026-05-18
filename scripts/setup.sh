@@ -314,16 +314,10 @@ echo "==> Step 9: Configuring LLM egress through agentgateway..."
 # - agentgateway forwards to api.anthropic.com with TLS
 # - agentgateway parses Anthropic responses for token usage metrics
 #
-# This approach:
-# 1. Gives full LLM observability (token counts, latency) in agentgateway UI
-# 2. Centralizes API key management in agentgateway
-# 3. Enables provider switching by changing one AgentgatewayBackend — zero agent changes
-#
 # Note: Direct Anthropic AI backend has a known bug (agentgateway-enterprise#520)
 # where Anthropic-native tool definitions are rejected. The OpenAI→Anthropic
 # translation path works around this.
 
-# 1. Anthropic API key secret — agentgateway uses this for auth injection
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Secret
@@ -335,7 +329,6 @@ stringData:
   Authorization: ${ANTHROPIC_API_KEY}
 EOF
 
-# 2. AI backend — agentgateway translates OpenAI→Anthropic and injects the API key
 kubectl apply -f - <<'EOF'
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -353,7 +346,6 @@ spec:
         name: anthropic-secret
 EOF
 
-# 3. HTTPRoute — /anthropic path prefix for LLM traffic
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -376,9 +368,8 @@ spec:
       kind: AgentgatewayBackend
 EOF
 
-# 4. Dummy OpenAI key — kagent's SDK requires a key for initialization even
-#    though agentgateway handles the real auth. The ModelConfig points at
-#    agentgateway, so this key is never sent to a real OpenAI endpoint.
+# Dummy OpenAI key — kagent's SDK requires a key for initialization even
+# though agentgateway handles the real auth.
 kubectl apply -f - <<'EOF'
 apiVersion: v1
 kind: Secret
@@ -448,10 +439,206 @@ kubectl get httproute -n amss -o wide
 echo "  HTTPRoutes applied."
 
 # ─────────────────────────────────────────────
-# Step 12: Create ModelConfig, RemoteMCPServers, Agent CRDs
+# Step 12: Deploy and configure Keycloak
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 12: Creating ModelConfig, RemoteMCPServers, and Agent CRDs..."
+echo "==> Step 12: Deploying and configuring Keycloak..."
+
+kubectl create namespace keycloak 2>/dev/null || true
+kubectl -n keycloak apply -f https://raw.githubusercontent.com/solo-io/gloo-mesh-use-cases/main/policy-demo/oidc/keycloak.yaml
+kubectl -n keycloak rollout status deploy/keycloak --timeout=120s
+
+echo "  Waiting for Keycloak endpoint..."
+KEYCLOAK_HOST=""
+KEYCLOAK_PORT=""
+for i in $(seq 1 30); do
+  KEYCLOAK_HOST=$(kubectl -n keycloak get service keycloak -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null) || true
+  if [ -n "$KEYCLOAK_HOST" ]; then break; fi
+  sleep 2
+done
+if [ -z "$KEYCLOAK_HOST" ]; then
+  KEYCLOAK_HOST="localhost"
+  KEYCLOAK_PORT=$(kubectl -n keycloak get service keycloak -o jsonpath='{.spec.ports[0].nodePort}')
+  echo "  No LoadBalancer IP — using NodePort: ${KEYCLOAK_HOST}:${KEYCLOAK_PORT}"
+else
+  KEYCLOAK_PORT=8080
+fi
+KEYCLOAK_URL="http://${KEYCLOAK_HOST}:${KEYCLOAK_PORT}"
+echo "  Keycloak reachable at $KEYCLOAK_URL"
+
+# Admin token helper — tokens expire in 60s, refresh before each batch of calls
+get_keycloak_token() {
+  curl -s -d "client_id=admin-cli" -d "username=admin" -d "password=admin" \
+    -d "grant_type=password" \
+    "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" | jq -r .access_token
+}
+
+echo "  Waiting for Keycloak to be ready..."
+for i in $(seq 1 30); do
+  if curl -s -o /dev/null -w "%{http_code}" "$KEYCLOAK_URL/realms/master" | grep -q "200"; then
+    break
+  fi
+  sleep 2
+done
+
+KC_TOKEN=$(get_keycloak_token)
+echo "  Admin token acquired."
+
+echo "  Registering OIDC client..."
+KEYCLOAK_CLIENT=""
+kc_reg_token=""
+read -r KEYCLOAK_CLIENT kc_reg_token <<<$(curl -s -H "Authorization: Bearer ${KC_TOKEN}" \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"expiration": 0, "count": 1}' \
+  "$KEYCLOAK_URL/admin/realms/master/clients-initial-access" | jq -r '[.id, .token] | @tsv')
+
+kc_id=""
+KEYCLOAK_SECRET=""
+read -r kc_id KEYCLOAK_SECRET <<<$(curl -s -k -X POST \
+  -d "{ \"clientId\": \"${KEYCLOAK_CLIENT}\" }" \
+  -H "Content-Type:application/json" \
+  -H "Authorization: bearer ${kc_reg_token}" \
+  "${KEYCLOAK_URL}/realms/master/clients-registrations/default" | jq -r '[.id, .secret] | @tsv')
+
+echo "  Client ID: $KEYCLOAK_CLIENT"
+
+KC_TOKEN=$(get_keycloak_token)
+
+echo "  Configuring client settings..."
+curl -s -H "Authorization: Bearer ${KC_TOKEN}" -X PUT -H "Content-Type: application/json" \
+  -d '{"serviceAccountsEnabled": true, "directAccessGrantsEnabled": true, "authorizationServicesEnabled": true, "redirectUris": ["*"]}' \
+  "$KEYCLOAK_URL/admin/realms/master/clients/${kc_id}" > /dev/null
+
+echo "  Adding JWT claim mappers..."
+for mapper in \
+  '{"name":"group","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"group","jsonType.label":"String","user.attribute":"group","id.token.claim":"true","access.token.claim":"true"}}' \
+  '{"name":"crew_id","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"crew_id","jsonType.label":"String","user.attribute":"crew_id","id.token.claim":"true","access.token.claim":"true"}}' \
+  '{"name":"mission","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"mission","jsonType.label":"String","user.attribute":"mission","id.token.claim":"true","access.token.claim":"true"}}'; do
+  curl -s -H "Authorization: Bearer ${KC_TOKEN}" -X POST -H "Content-Type: application/json" \
+    -d "$mapper" \
+    "$KEYCLOAK_URL/admin/realms/master/clients/${kc_id}/protocol-mappers/models" > /dev/null
+done
+
+KC_TOKEN=$(get_keycloak_token)
+
+echo "  Creating crew members..."
+for user in \
+  '{"username":"wiseman","email":"wiseman@artemis.nasa.gov","firstName":"Reid","lastName":"Wiseman","enabled":true,"attributes":{"group":"crew","crew_id":"wiseman-r","mission":"artemis-ii"},"credentials":[{"type":"password","value":"artemis","temporary":false}]}' \
+  '{"username":"glover","email":"glover@artemis.nasa.gov","firstName":"Victor","lastName":"Glover","enabled":true,"attributes":{"group":"crew","crew_id":"glover-v","mission":"artemis-ii"},"credentials":[{"type":"password","value":"artemis","temporary":false}]}' \
+  '{"username":"koch","email":"koch@artemis.nasa.gov","firstName":"Christina","lastName":"Koch","enabled":true,"attributes":{"group":"crew","crew_id":"koch-c","mission":"artemis-ii"},"credentials":[{"type":"password","value":"artemis","temporary":false}]}' \
+  '{"username":"hansen","email":"hansen@artemis.nasa.gov","firstName":"Jeremy","lastName":"Hansen","enabled":true,"attributes":{"group":"crew","crew_id":"hansen-j","mission":"artemis-ii"},"credentials":[{"type":"password","value":"artemis","temporary":false}]}'; do
+  result=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${KC_TOKEN}" \
+    -X POST -H "Content-Type: application/json" -d "$user" \
+    "$KEYCLOAK_URL/admin/realms/master/users")
+  name=$(echo "$user" | jq -r .username)
+  if [ "$result" = "201" ]; then echo "    Created: $name"
+  elif [ "$result" = "409" ]; then echo "    Already exists: $name"
+  else echo "    Failed ($result): $name"; fi
+done
+
+KC_TOKEN=$(get_keycloak_token)
+
+echo "  Creating ground control users..."
+for user in \
+  '{"username":"gc-eclss","email":"eclss@mission-control.nasa.gov","firstName":"ECLSS","lastName":"Officer","enabled":true,"attributes":{"group":"ground-control","crew_id":"gc-eclss","mission":"artemis-ii"},"credentials":[{"type":"password","value":"houston","temporary":false}]}' \
+  '{"username":"gc-comm","email":"comm@mission-control.nasa.gov","firstName":"COMM","lastName":"Officer","enabled":true,"attributes":{"group":"ground-control","crew_id":"gc-comm","mission":"artemis-ii"},"credentials":[{"type":"password","value":"houston","temporary":false}]}' \
+  '{"username":"gc-eva","email":"eva@mission-control.nasa.gov","firstName":"EVA","lastName":"Officer","enabled":true,"attributes":{"group":"ground-control","crew_id":"gc-eva","mission":"artemis-ii"},"credentials":[{"type":"password","value":"houston","temporary":false}]}' \
+  '{"username":"gc-gnc","email":"gnc@mission-control.nasa.gov","firstName":"GNC","lastName":"Officer","enabled":true,"attributes":{"group":"ground-control","crew_id":"gc-gnc","mission":"artemis-ii"},"credentials":[{"type":"password","value":"houston","temporary":false}]}' \
+  '{"username":"amss-agent","email":"agent@amss.local","firstName":"AMSS","lastName":"Agent","enabled":true,"attributes":{"group":"service-account","crew_id":"amss-agent","mission":"artemis-ii"},"credentials":[{"type":"password","value":"agent-secret","temporary":false}]}'; do
+  result=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${KC_TOKEN}" \
+    -X POST -H "Content-Type: application/json" -d "$user" \
+    "$KEYCLOAK_URL/admin/realms/master/users")
+  name=$(echo "$user" | jq -r .username)
+  if [ "$result" = "201" ]; then echo "    Created: $name"
+  elif [ "$result" = "409" ]; then echo "    Already exists: $name"
+  else echo "    Failed ($result): $name"; fi
+done
+
+KC_TOKEN=$(get_keycloak_token)
+
+echo "  Removing client registration policies (testing only)..."
+trusted_hosts=$(curl -s -H "Authorization: Bearer ${KC_TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/master/components?type=org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy" \
+  | jq -r 'if type=="array" then .[] | select(.providerId=="trusted-hosts") | .id else empty end')
+if [ -n "$trusted_hosts" ]; then
+  curl -s -X DELETE -H "Authorization: Bearer ${KC_TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/master/components/${trusted_hosts}" > /dev/null
+  echo "    Removed trusted-hosts policy"
+fi
+
+allowed_templates=$(curl -s -H "Authorization: Bearer ${KC_TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/master/components?type=org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy" \
+  | jq -r '.[] | select(.providerId=="allowed-client-templates" and .subType=="anonymous") | .id')
+if [ -n "$allowed_templates" ]; then
+  curl -s -X DELETE -H "Authorization: Bearer ${KC_TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/master/components/${allowed_templates}" > /dev/null
+  echo "    Removed allowed-client-templates policy"
+fi
+
+echo "  Setting token lifetime to 30 minutes..."
+TOKEN=$(get_keycloak_token)
+curl -s -H "Authorization: Bearer ${TOKEN}" -X PUT -H "Content-Type: application/json" \
+  -d '{"accessTokenLifespan": 1800}' \
+  "$KEYCLOAK_URL/admin/realms/master"
+
+echo "  Creating AuthConfig for JWT validation..."
+KEYCLOAK_CERT_KEYS=$(curl -s "$KEYCLOAK_URL/realms/master/protocol/openid-connect/certs" | jq -c .)
+
+kubectl apply -f - <<AUTHEOF
+apiVersion: extauth.solo.io/v1
+kind: AuthConfig
+metadata:
+  name: keycloak-jwt
+  namespace: agentgateway-system
+spec:
+  configs:
+  - oauth2:
+      accessTokenValidation:
+        jwt:
+          localJwks:
+            inlineString: '${KEYCLOAK_CERT_KEYS}'
+AUTHEOF
+
+echo "  Applying auth policy to ingress routes..."
+kubectl apply -f - <<'EOF'
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: keycloak-auth
+  namespace: amss
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: bff-api-route
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: frontend-route
+  traffic:
+    entExtAuth:
+      authConfigRef:
+        name: keycloak-jwt
+        namespace: agentgateway-system
+      backendRef:
+        name: ext-auth-service-enterprise-agentgateway
+        namespace: agentgateway-system
+        port: 8083
+EOF
+
+echo "  Saving client credentials to k8s secret..."
+kubectl create secret generic keycloak-client -n amss \
+  --from-literal=client-id="$KEYCLOAK_CLIENT" \
+  --from-literal=client-secret="$KEYCLOAK_SECRET" \
+  --from-literal=keycloak-url="$KEYCLOAK_URL" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+echo "  Keycloak configured."
+
+# ─────────────────────────────────────────────
+# Step 13: Create ModelConfig, RemoteMCPServers, Agent CRDs
+# ─────────────────────────────────────────────
+echo ""
+echo "==> Step 13: Creating ModelConfig, RemoteMCPServers, and Agent CRDs..."
 
 echo "  Removing Helm-managed ModelConfig to avoid field ownership conflict..."
 kubectl delete modelconfig default-model-config -n kagent 2>/dev/null || true
@@ -508,10 +695,10 @@ kubectl apply -f agents/kb-curator-agent/agent.yaml
 echo "  ModelConfig, RemoteMCPServers, and Agent CRDs created."
 
 # ─────────────────────────────────────────────
-# Step 13: Enable live agent mode on BFF
+# Step 14: Enable live agent mode on BFF
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 13: Setting BFF to live agent mode (STUB_MODE=false)..."
+echo "==> Step 14: Setting BFF to live agent mode (STUB_MODE=false)..."
 
 kubectl set env deployment/bff -n amss \
   STUB_MODE=false \
@@ -524,10 +711,10 @@ kubectl rollout status deployment/bff -n amss --timeout=120s
 echo "  BFF is in live agent mode."
 
 # ─────────────────────────────────────────────
-# Step 14: Wait for all deployments to be ready
+# Step 15: Wait for all deployments to be ready
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 14: Waiting for all AMSS deployments to be ready..."
+echo "==> Step 15: Waiting for all AMSS deployments to be ready..."
 
 kubectl rollout status deployment/kb-store     -n amss --timeout=120s
 kubectl rollout status deployment/ticket-store -n amss --timeout=120s
@@ -561,6 +748,18 @@ echo ""
 echo "  Quick smoke test:"
 echo "    curl -s http://localhost:8080/health | jq .data.status"
 echo "    curl -s http://localhost:8080/api/v1/crew | jq .data.total"
+echo ""
+echo "  Keycloak:"
+echo "    URL:    $KEYCLOAK_URL"
+echo "    Admin:  admin / admin"
+echo "    Crew:   wiseman, glover, koch, hansen (password: artemis)"
+echo "    GC:     gc-eclss, gc-comm, gc-eva, gc-gnc (password: houston)"
+echo "    Agent:  amss-agent (password: agent-secret)"
+echo ""
+echo "  Get a user token:"
+echo "    curl -s -d \"client_id=${KEYCLOAK_CLIENT}\" -d \"client_secret=${KEYCLOAK_SECRET}\" \\"
+echo "      -d \"username=wiseman\" -d \"password=artemis\" -d \"grant_type=password\" \\"
+echo "      \"${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token\" | jq -r .access_token"
 echo ""
 if [ "$INSTALL_MESH" = true ]; then
   echo "  Ambient mesh: amss namespace enrolled (mTLS on data layer)"

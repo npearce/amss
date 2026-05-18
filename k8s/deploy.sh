@@ -13,11 +13,21 @@ docker build -t amss/crew-store:latest   ./stores/crew-store
 docker build -t amss/kb-mcp:latest       ./mcp-servers/kb-mcp
 docker build -t amss/ticket-mcp:latest   ./mcp-servers/ticket-mcp
 docker build -t amss/bff:latest          ./bff
-# No VITE_API_URL — the SPA uses /api/v1/... as a relative path by default.
-# This works when frontend and BFF are behind the same host (agentgateway).
-# To target a specific BFF host (e.g. direct NodePort access without agentgateway):
-#   docker build --build-arg VITE_API_URL=http://localhost:30080 -t amss/frontend:latest ./frontend
-docker build -t amss/frontend:latest ./frontend
+# Detect Keycloak credentials — baked into the frontend at build time by Vite.
+# If the keycloak-client secret doesn't exist, vars are empty and auth is disabled.
+KC_FE_URL=""
+KC_FE_CLIENT=""
+KC_FE_SECRET=""
+if kubectl get secret keycloak-client -n amss &>/dev/null; then
+  KC_FE_URL=$(kubectl get secret keycloak-client -n amss -o jsonpath='{.data.keycloak-url}' | base64 -d)
+  KC_FE_CLIENT=$(kubectl get secret keycloak-client -n amss -o jsonpath='{.data.client-id}' | base64 -d)
+  KC_FE_SECRET=$(kubectl get secret keycloak-client -n amss -o jsonpath='{.data.client-secret}' | base64 -d)
+fi
+docker build -t amss/frontend:latest \
+  --build-arg VITE_KEYCLOAK_URL="${KC_FE_URL}" \
+  --build-arg VITE_KEYCLOAK_CLIENT_ID="${KC_FE_CLIENT}" \
+  --build-arg VITE_KEYCLOAK_CLIENT_SECRET="${KC_FE_SECRET}" \
+  ./frontend
 
 # --- kind users: uncomment to load images into the cluster ---
 # kind load docker-image amss/kb-store:latest
