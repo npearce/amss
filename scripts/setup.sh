@@ -506,7 +506,7 @@ KC_TOKEN=$(get_keycloak_token)
 
 echo "  Configuring client settings..."
 curl -s -H "Authorization: Bearer ${KC_TOKEN}" -X PUT -H "Content-Type: application/json" \
-  -d '{"serviceAccountsEnabled": true, "directAccessGrantsEnabled": true, "authorizationServicesEnabled": true, "redirectUris": ["*"]}' \
+  -d '{"serviceAccountsEnabled": true, "directAccessGrantsEnabled": true, "authorizationServicesEnabled": true, "redirectUris": ["*"], "webOrigins": ["*"]}' \
   "$KEYCLOAK_URL/admin/realms/master/clients/${kc_id}" > /dev/null
 
 echo "  Adding JWT claim mappers..."
@@ -611,9 +611,6 @@ spec:
   - group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: bff-api-route
-  - group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: frontend-route
   traffic:
     entExtAuth:
       authConfigRef:
@@ -635,10 +632,32 @@ kubectl create secret generic keycloak-client -n amss \
 echo "  Keycloak configured."
 
 # ─────────────────────────────────────────────
-# Step 13: Create ModelConfig, RemoteMCPServers, Agent CRDs
+# Step 13: Rebuild frontend with Keycloak credentials baked in
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 13: Creating ModelConfig, RemoteMCPServers, and Agent CRDs..."
+echo "==> Step 13: Rebuilding frontend with Keycloak credentials..."
+
+# The frontend runs in the browser and reaches Keycloak via port-forward on
+# localhost:9090. The cluster IP stored in the secret is for in-cluster use only.
+KC_FE_CLIENT=$(kubectl get secret keycloak-client -n amss -o jsonpath='{.data.client-id}' | base64 -d)
+KC_FE_SECRET=$(kubectl get secret keycloak-client -n amss -o jsonpath='{.data.client-secret}' | base64 -d)
+
+docker build --no-cache -t amss/frontend:latest \
+  --build-arg VITE_KEYCLOAK_URL="http://localhost:9090" \
+  --build-arg VITE_KEYCLOAK_CLIENT_ID="${KC_FE_CLIENT}" \
+  --build-arg VITE_KEYCLOAK_CLIENT_SECRET="${KC_FE_SECRET}" \
+  ./frontend
+
+kubectl rollout restart deployment/frontend -n amss
+kubectl rollout status  deployment/frontend -n amss --timeout=120s
+
+echo "  Frontend rebuilt with Keycloak credentials."
+
+# ─────────────────────────────────────────────
+# Step 14: Create ModelConfig, RemoteMCPServers, Agent CRDs
+# ─────────────────────────────────────────────
+echo ""
+echo "==> Step 14: Creating ModelConfig, RemoteMCPServers, and Agent CRDs..."
 
 echo "  Removing Helm-managed ModelConfig to avoid field ownership conflict..."
 kubectl delete modelconfig default-model-config -n kagent 2>/dev/null || true
@@ -695,10 +714,10 @@ kubectl apply -f agents/kb-curator-agent/agent.yaml
 echo "  ModelConfig, RemoteMCPServers, and Agent CRDs created."
 
 # ─────────────────────────────────────────────
-# Step 14: Enable live agent mode on BFF
+# Step 15: Enable live agent mode on BFF
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 14: Setting BFF to live agent mode (STUB_MODE=false)..."
+echo "==> Step 15: Setting BFF to live agent mode (STUB_MODE=false)..."
 
 kubectl set env deployment/bff -n amss \
   STUB_MODE=false \
@@ -711,10 +730,10 @@ kubectl rollout status deployment/bff -n amss --timeout=120s
 echo "  BFF is in live agent mode."
 
 # ─────────────────────────────────────────────
-# Step 15: Wait for all deployments to be ready
+# Step 16: Wait for all deployments to be ready
 # ─────────────────────────────────────────────
 echo ""
-echo "==> Step 15: Waiting for all AMSS deployments to be ready..."
+echo "==> Step 16: Waiting for all AMSS deployments to be ready..."
 
 kubectl rollout status deployment/kb-store     -n amss --timeout=120s
 kubectl rollout status deployment/ticket-store -n amss --timeout=120s

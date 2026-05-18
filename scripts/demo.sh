@@ -12,7 +12,8 @@ pkill -f "activity-generator" 2>/dev/null || true
 sleep 1
 
 # Start port-forwards
-kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
+kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8888:80 &
+kubectl port-forward svc/keycloak -n keycloak 9090:8080 &
 kubectl port-forward svc/solo-enterprise-ui -n kagent 4000:80 &
 sleep 3
 
@@ -29,7 +30,7 @@ fi
 
 # Start activity generator in background
 cd activity-generator && \
-  BFF_URL=http://localhost:8080 \
+  BFF_URL=http://localhost:8888 \
   KEYCLOAK_URL="${KC_URL}" \
   KEYCLOAK_CLIENT_ID="${KC_CLIENT}" \
   KEYCLOAK_CLIENT_SECRET="${KC_SECRET}" \
@@ -40,7 +41,8 @@ AG_PID=$!
 cd ..
 
 echo ""
-echo "  AMSS Application:   http://localhost:8080"
+echo "  AMSS Application:   http://localhost:8888"
+echo "  Keycloak:           http://localhost:9090"
 echo "  Solo Enterprise UI: http://localhost:4000"
 echo ""
 echo "  Activity generator running (22-min cycles). Press Ctrl+C to stop."

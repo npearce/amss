@@ -4,7 +4,7 @@ import { UserContext } from '../UserContext'
 import UserSwitcher from './UserSwitcher'
 
 export default function NavBar() {
-  const { crew, currentUser, setCurrentUser } = useContext(UserContext)
+  const { crew, currentUser, setCurrentUser, onLogout } = useContext(UserContext)
 
   return (
     <nav className="navbar">
@@ -30,6 +30,9 @@ export default function NavBar() {
       </div>
 
       <UserSwitcher crew={crew} currentUser={currentUser} onChange={setCurrentUser} />
+      {onLogout && (
+        <button className="logout-btn" onClick={onLogout}>Log out</button>
+      )}
     </nav>
   )
 }

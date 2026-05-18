@@ -14,6 +14,17 @@ COPY . .
 ARG VITE_API_URL=""
 ENV VITE_API_URL=${VITE_API_URL}
 
+# Keycloak ROPC auth — baked in at build time by deploy.sh.
+# If these are empty, the frontend runs without auth (Keycloak not installed).
+ARG VITE_KEYCLOAK_URL=""
+ENV VITE_KEYCLOAK_URL=${VITE_KEYCLOAK_URL}
+
+ARG VITE_KEYCLOAK_CLIENT_ID=""
+ENV VITE_KEYCLOAK_CLIENT_ID=${VITE_KEYCLOAK_CLIENT_ID}
+
+ARG VITE_KEYCLOAK_CLIENT_SECRET=""
+ENV VITE_KEYCLOAK_CLIENT_SECRET=${VITE_KEYCLOAK_CLIENT_SECRET}
+
 RUN npm run build
 
 # ── Serve stage ──────────────────────────────────────────────

@@ -9,12 +9,17 @@
 // Set VITE_API_URL only when the BFF is on a different host than the frontend
 // (e.g. VITE_API_URL=http://localhost:30080 for direct NodePort access without
 // agentgateway). The value must be the base host with no trailing slash or /api/v1.
+import { getToken } from './auth'
+
 const BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
 const API = `${BASE}/api/v1`
 
 async function apiFetch(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   })
   const body = await res.json()

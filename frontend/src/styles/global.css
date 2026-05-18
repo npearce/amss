@@ -884,6 +884,153 @@ input, select, textarea { font-family: var(--font-sans); }
   font-size: 13px;
 }
 
+/* ─── Login page ────────────────────────────────────────────── */
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--bg-primary);
+  padding: 20px;
+}
+
+.login-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 40px 36px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+
+.login-logo {
+  font-size: 32px;
+  color: var(--nasa-blue-light);
+  margin-bottom: 12px;
+}
+
+.login-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.login-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  margin-bottom: 28px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.login-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.login-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  padding: 9px 12px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+.login-input::placeholder { color: var(--text-dim); }
+.login-input:focus { border-color: var(--border-focus); }
+.login-input:disabled { opacity: 0.5; }
+
+.login-error {
+  background: var(--nasa-red-pale);
+  border: 1px solid var(--nasa-red)40;
+  border-radius: var(--radius);
+  color: var(--nasa-red);
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.login-btn {
+  background: var(--nasa-blue);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s;
+  margin-top: 4px;
+}
+
+.login-btn:hover:not(:disabled) { background: var(--nasa-blue-light); }
+.login-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.login-hints {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.login-hint-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.login-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.login-hint-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--nasa-blue-light);
+}
+
+/* ─── Logout button ─────────────────────────────────────────── */
+.logout-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 12px;
+  font-size: 12px;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.logout-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--text-dim);
+}
+
 /* ─── Utility ───────────────────────────────────────────────── */
 .mono { font-family: var(--font-mono); }
 .text-dim { color: var(--text-dim); }

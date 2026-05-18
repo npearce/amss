@@ -32,13 +32,12 @@ spec:
           value: http://ticket-store.amss.svc.cluster.local:8082
         - name: CREW_STORE_URL
           value: http://crew-store.amss.svc.cluster.local:8083
-        # Agents are not available until Phase 3 (kagent install).
-        # STUB_MODE=true makes chat and curate return canned responses without
-        # calling the agent URLs.
         - name: STUB_MODE
-          value: "true"
+          value: "false"
         - name: MISSION_SUPPORT_AGENT_URL
-          value: http://mission-support-agent.amss.svc.cluster.local:8090
+          value: http://kagent-controller.kagent.svc.cluster.local:8083
+        - name: KAGENT_AGENT_NAMESPACE
+          value: kagent
         - name: KB_CURATOR_AGENT_URL
           value: http://kb-curator-agent.amss.svc.cluster.local:8091
         readinessProbe:
